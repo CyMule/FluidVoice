@@ -65,8 +65,25 @@ struct AppTheme {
             }
         }
 
+        struct FormRow {
+            let horizontalPadding: CGFloat
+            let verticalPadding: CGFloat
+            let cornerRadius: CGFloat
+            let materialOpacity: Double
+            let borderOpacity: Double
+
+            static let standard = FormRow(
+                horizontalPadding: 12,
+                verticalPadding: 10,
+                cornerRadius: 8,
+                materialOpacity: 0.5,
+                borderOpacity: 0.8
+            )
+        }
+
         let spacing: Spacing
         let corners: CornerRadius
+        let formRow: FormRow
         let cardShadow: Shadow
         let elevatedCardShadow: Shadow
     }
@@ -76,6 +93,7 @@ struct AppTheme {
         let sidebar: Material
         let card: Material
         let elevatedCard: Material
+        let formRow: Material
         let toolbar: Material
     }
 
@@ -106,6 +124,7 @@ struct AppTheme {
             metrics: Metrics(
                 spacing: .standard,
                 corners: .standard,
+                formRow: .standard,
                 cardShadow: .subtle(color: .black, opacity: 0.70),
                 elevatedCardShadow: .subtle(color: .black, opacity: 0.80)
             ),
@@ -114,6 +133,7 @@ struct AppTheme {
                 sidebar: .ultraThinMaterial,
                 card: .thinMaterial,
                 elevatedCard: .regularMaterial,
+                formRow: .ultraThinMaterial,
                 toolbar: .ultraThinMaterial
             )
         )

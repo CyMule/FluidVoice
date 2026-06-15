@@ -493,14 +493,22 @@ struct GlassToggleStyle: ToggleStyle {
 // MARK: - Native Form Row Style
 
 struct FormRowStyle: ViewModifier {
+    @Environment(\.theme) private var theme
+
     func body(content: Content) -> some View {
+        let row = self.theme.metrics.formRow
+        let shape = RoundedRectangle(cornerRadius: row.cornerRadius, style: .continuous)
+
         content
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.ultraThinMaterial.opacity(0.5))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(.white.opacity(0.08), lineWidth: 1)))
+            .padding(.horizontal, row.horizontalPadding)
+            .padding(.vertical, row.verticalPadding)
+            .background(
+                shape
+                    .fill(self.theme.materials.formRow.opacity(row.materialOpacity))
+                    .overlay(
+                        shape.stroke(self.theme.palette.cardBorder.opacity(row.borderOpacity), lineWidth: 1)
+                    )
+            )
     }
 }
 
