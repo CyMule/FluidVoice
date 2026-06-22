@@ -868,11 +868,41 @@ struct SettingsView: View {
                                     Divider().opacity(0.2)
 
                                     self.optionToggleRow(
-                                        title: "GAAV Mode",
-                                        description: "Remove first letter capitalization and trailing period. Useful for search queries, form fields, or casual text.\nFeature requested by MaxGaav.",
+                                        title: "Lowercase First Letter",
+                                        description: "Start each transcription with a lowercase letter. Useful for search queries, form fields, or casual text.",
                                         isOn: Binding(
-                                            get: { SettingsStore.shared.gaavModeEnabled },
-                                            set: { SettingsStore.shared.gaavModeEnabled = $0 }
+                                            get: { SettingsStore.shared.gaavLowercaseFirstLetterEnabled },
+                                            set: { SettingsStore.shared.gaavLowercaseFirstLetterEnabled = $0 }
+                                        )
+                                    )
+                                    Divider().opacity(0.2)
+
+                                    self.optionToggleRow(
+                                        title: "Remove Trailing Period",
+                                        description: "Drop a final period from transcriptions. Feature requested by MaxGaav.",
+                                        isOn: Binding(
+                                            get: { SettingsStore.shared.gaavRemoveTrailingPeriodEnabled },
+                                            set: { SettingsStore.shared.gaavRemoveTrailingPeriodEnabled = $0 }
+                                        )
+                                    )
+                                    Divider().opacity(0.2)
+
+                                    self.optionToggleRow(
+                                        title: "Space Between Dictations",
+                                        description: "Add spacing so consecutive dictations chain without manually pressing the spacebar.",
+                                        isOn: Binding(
+                                            get: { SettingsStore.shared.continuousDictationSpacingEnabled },
+                                            set: { SettingsStore.shared.continuousDictationSpacingEnabled = $0 }
+                                        )
+                                    )
+                                    Divider().opacity(0.2)
+
+                                    self.optionToggleRow(
+                                        title: "Smart Capitalization",
+                                        description: "Use text before the cursor to decide whether the next dictation should start capitalized or lowercase.",
+                                        isOn: Binding(
+                                            get: { SettingsStore.shared.contextAwareCapitalizationEnabled },
+                                            set: { SettingsStore.shared.contextAwareCapitalizationEnabled = $0 }
                                         )
                                     )
                                     Divider().opacity(0.2)

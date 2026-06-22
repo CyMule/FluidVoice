@@ -67,6 +67,11 @@ struct SettingsBackupPayload: Codable, Equatable {
     let fillerWords: [String]
     let removeFillerWordsEnabled: Bool
     let gaavModeEnabled: Bool
+    let gaavLowercaseFirstLetterEnabled: Bool?
+    let gaavRemoveTrailingPeriodEnabled: Bool?
+    let continuousDictationModeEnabled: Bool?
+    let continuousDictationSpacingEnabled: Bool?
+    let contextAwareCapitalizationEnabled: Bool?
     let pauseMediaDuringTranscription: Bool
     let vocabularyBoostingEnabled: Bool
     let customDictionaryEntries: [SettingsStore.CustomDictionaryEntry]

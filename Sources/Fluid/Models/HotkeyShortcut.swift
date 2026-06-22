@@ -191,6 +191,20 @@ extension HotkeyShortcut {
         Self.modifierFlag(forKeyCode: self.keyCode)
     }
 
+    /// True when two modifier-only shortcuts would overlap — either identical
+    /// or one is a subset of the other's modifiers (e.g. ⌥ vs ⌥+⇧). Prevents
+    /// the shared `modifierOnlyKeyDown` release race in GlobalHotkeyManager.
+    func conflictsWith(_ other: HotkeyShortcut) -> Bool {
+        guard self.isModifierOnlyShortcut, other.isModifierOnlyShortcut else { return false }
+
+        let lhs = Set(self.normalizedModifierKeyCodes)
+        let rhs = Set(other.normalizedModifierKeyCodes)
+
+        guard !lhs.isEmpty, !rhs.isEmpty else { return false }
+
+        return lhs.isSubset(of: rhs) || rhs.isSubset(of: lhs)
+    }
+
     var isModifierOnlyShortcut: Bool {
         self.modifierTriggerFlag != nil
     }

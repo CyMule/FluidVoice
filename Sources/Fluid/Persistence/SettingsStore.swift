@@ -2688,6 +2688,11 @@ final class SettingsStore: ObservableObject {
             fillerWords: self.fillerWords,
             removeFillerWordsEnabled: self.removeFillerWordsEnabled,
             gaavModeEnabled: self.gaavModeEnabled,
+            gaavLowercaseFirstLetterEnabled: self.gaavLowercaseFirstLetterEnabled,
+            gaavRemoveTrailingPeriodEnabled: self.gaavRemoveTrailingPeriodEnabled,
+            continuousDictationModeEnabled: self.continuousDictationModeEnabled,
+            continuousDictationSpacingEnabled: self.continuousDictationSpacingEnabled,
+            contextAwareCapitalizationEnabled: self.contextAwareCapitalizationEnabled,
             pauseMediaDuringTranscription: self.pauseMediaDuringTranscription,
             vocabularyBoostingEnabled: self.vocabularyBoostingEnabled,
             customDictionaryEntries: self.customDictionaryEntries,
@@ -2778,7 +2783,14 @@ final class SettingsStore: ObservableObject {
         self.weekendsDontBreakStreak = payload.weekendsDontBreakStreak
         self.fillerWords = payload.fillerWords
         self.removeFillerWordsEnabled = payload.removeFillerWordsEnabled
-        self.gaavModeEnabled = payload.gaavModeEnabled
+        let restoredGaavModeEnabled = payload.gaavModeEnabled
+        let restoredContinuousDictationModeEnabled = payload.continuousDictationModeEnabled ?? false
+        self.gaavModeEnabled = restoredGaavModeEnabled
+        self.gaavLowercaseFirstLetterEnabled = payload.gaavLowercaseFirstLetterEnabled ?? restoredGaavModeEnabled
+        self.gaavRemoveTrailingPeriodEnabled = payload.gaavRemoveTrailingPeriodEnabled ?? restoredGaavModeEnabled
+        self.continuousDictationModeEnabled = restoredContinuousDictationModeEnabled
+        self.continuousDictationSpacingEnabled = payload.continuousDictationSpacingEnabled ?? restoredContinuousDictationModeEnabled
+        self.contextAwareCapitalizationEnabled = payload.contextAwareCapitalizationEnabled ?? restoredContinuousDictationModeEnabled
         self.pauseMediaDuringTranscription = payload.pauseMediaDuringTranscription
         self.vocabularyBoostingEnabled = payload.vocabularyBoostingEnabled
         self.customDictionaryEntries = payload.customDictionaryEntries
@@ -3361,15 +3373,68 @@ final class SettingsStore: ObservableObject {
 
     // MARK: - GAAV Mode
 
-    /// GAAV Mode: Removes first letter capitalization and trailing period from transcriptions.
-    /// Useful for search queries, form fields, or casual text input where sentence formatting is unwanted.
-    /// Feature requested by maxgaav – thank you for the suggestion!
+    /// Legacy combined GAAV setting. New behavior uses the split formatting toggles below.
     var gaavModeEnabled: Bool {
         get { self.defaults.object(forKey: Keys.gaavModeEnabled) as? Bool ?? false }
         set {
             objectWillChange.send()
             self.defaults.set(newValue, forKey: Keys.gaavModeEnabled)
         }
+    }
+
+    var gaavLowercaseFirstLetterEnabled: Bool {
+        get {
+            self.defaults.object(forKey: Keys.gaavLowercaseFirstLetterEnabled) as? Bool ?? self.gaavModeEnabled
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.gaavLowercaseFirstLetterEnabled)
+        }
+    }
+
+    var gaavRemoveTrailingPeriodEnabled: Bool {
+        get {
+            self.defaults.object(forKey: Keys.gaavRemoveTrailingPeriodEnabled) as? Bool ?? self.gaavModeEnabled
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.gaavRemoveTrailingPeriodEnabled)
+        }
+    }
+
+    // MARK: - Continuous Dictation Mode
+
+    /// Legacy combined continuous-dictation setting. New behavior uses the split toggles below.
+    var continuousDictationModeEnabled: Bool {
+        get { self.defaults.object(forKey: Keys.continuousDictationModeEnabled) as? Bool ?? false }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.continuousDictationModeEnabled)
+        }
+    }
+
+    var continuousDictationSpacingEnabled: Bool {
+        get {
+            self.defaults.object(forKey: Keys.continuousDictationSpacingEnabled) as? Bool ?? self.continuousDictationModeEnabled
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.continuousDictationSpacingEnabled)
+        }
+    }
+
+    var contextAwareCapitalizationEnabled: Bool {
+        get {
+            self.defaults.object(forKey: Keys.contextAwareCapitalizationEnabled) as? Bool ?? self.continuousDictationModeEnabled
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.contextAwareCapitalizationEnabled)
+        }
+    }
+
+    var needsDictationFormattingContext: Bool {
+        self.continuousDictationSpacingEnabled || self.contextAwareCapitalizationEnabled
     }
 
     // MARK: - Media Playback Control
@@ -4203,6 +4268,13 @@ private extension SettingsStore {
 
         /// GAAV Mode (removes capitalization and trailing punctuation)
         static let gaavModeEnabled = "GAAVModeEnabled"
+        static let gaavLowercaseFirstLetterEnabled = "GAAVLowercaseFirstLetterEnabled"
+        static let gaavRemoveTrailingPeriodEnabled = "GAAVRemoveTrailingPeriodEnabled"
+
+        /// Continuous Dictation Mode (append trailing space + smart caps for chaining)
+        static let continuousDictationModeEnabled = "ContinuousDictationModeEnabled"
+        static let continuousDictationSpacingEnabled = "ContinuousDictationSpacingEnabled"
+        static let contextAwareCapitalizationEnabled = "ContextAwareCapitalizationEnabled"
 
         // Custom Dictionary
         static let customDictionaryEntries = "CustomDictionaryEntries"

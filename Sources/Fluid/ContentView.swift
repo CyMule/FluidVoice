@@ -112,7 +112,7 @@ enum ShortcutRecordingTarget: Hashable {
 
 // NOTE: Streaming and AI response parsing is now handled by LLMClient
 
-// swiftlint:disable type_body_length
+// swiftlint:disable type_body_length file_length
 struct ContentView: View {
     private enum ActiveRecordingMode: String {
         case none
@@ -178,6 +178,7 @@ struct ContentView: View {
     @State private var previousSidebarItem: SidebarItem? = nil // Track previous for mode transitions
     @State private var playgroundUsed: Bool = SettingsStore.shared.playgroundUsed
     @State private var recordingAppInfo: (name: String, bundleId: String, windowTitle: String)? = nil
+    @State private var recordingPrecedingText: String = ""
 
     // Command Mode State
     // @State private var showCommandMode: Bool = false
@@ -884,6 +885,7 @@ struct ContentView: View {
     private func shortcutConflictMessage(for shortcut: HotkeyShortcut, target: ShortcutRecordingTarget) -> String? {
         let configuredShortcuts: [(ShortcutRecordingTarget, HotkeyShortcut)] = [
             (.primaryDictation, self.hotkeyShortcut),
+            (.secondaryDictation, self.promptModeHotkeyShortcut),
             (.command, self.commandModeHotkeyShortcut),
             (.edit, self.rewriteModeHotkeyShortcut),
             (.cancel, self.cancelRecordingHotkeyShortcut),
@@ -892,6 +894,9 @@ struct ContentView: View {
         for (otherTarget, configuredShortcut) in configuredShortcuts where otherTarget != target {
             if configuredShortcut == shortcut {
                 return "Duplicate with \(otherTarget.title)"
+            }
+            if shortcut.conflictsWith(configuredShortcut) {
+                return "Overlaps \(otherTarget.title) — use a different modifier key"
             }
         }
 
@@ -904,6 +909,9 @@ struct ContentView: View {
             }
             if assignment.shortcut == shortcut {
                 return "Duplicate with Prompt Shortcut"
+            }
+            if shortcut.conflictsWith(assignment.shortcut) {
+                return "Overlaps Prompt Shortcut — use a different modifier key"
             }
         }
 
@@ -1442,6 +1450,17 @@ struct ContentView: View {
             "Captured recording app context: app=\(info.name), bundleId=\(info.bundleId), title=\(info.windowTitle)",
             source: "ContentView"
         )
+
+        // Capture text before the caret only when formatting needs focused-field context.
+        if SettingsStore.shared.needsDictationFormattingContext {
+            self.recordingPrecedingText = TypingService.textBeforeCursorInFocusedField()
+            DebugLogger.shared.debug(
+                "Captured preceding text for continuous dictation (chars=\(self.recordingPrecedingText.count))",
+                source: "ContentView"
+            )
+        } else {
+            self.recordingPrecedingText = ""
+        }
     }
 
     private func resolveTypingTargetPID() -> (pid: pid_t?, shouldRestoreOriginalFocus: Bool) {
@@ -2062,6 +2081,10 @@ struct ContentView: View {
         // Apply GAAV formatting as the FINAL step (after AI post-processing)
         // This ensures the user's preference for no capitalization/period is respected
         finalText = ASRService.applyGAAVFormatting(finalText)
+        // Apply Continuous Dictation Mode after GAAV so smart caps use the field
+        // context captured at recording start, and the trailing space enables chaining.
+        finalText = ASRService.applyContinuousDictationFormatting(finalText, precedingText: self.recordingPrecedingText)
+        self.recordingPrecedingText = ""
         self.asr.finalText = finalText
         if route == .onboardingSandbox,
            self.isOnboardingVoicePlaygroundStepActive,
@@ -2112,6 +2135,7 @@ struct ContentView: View {
                 processedText: finalText,
                 appName: appInfo.name,
                 windowTitle: appInfo.windowTitle,
+                wasAIProcessed: postProcessingModel != nil && aiFallbackReason == nil,
                 processingModel: postProcessingModel,
                 aiProcessingError: aiFallbackReason
             )
@@ -2353,7 +2377,11 @@ struct ContentView: View {
             self.cancelPrewarmDictationIfNeeded()
         }
 
-        let finalText = ASRService.applyGAAVFormatting(text)
+        let gaavText = ASRService.applyGAAVFormatting(text)
+        let precedingText = SettingsStore.shared.needsDictationFormattingContext
+            ? TypingService.textBeforeCursorInFocusedField()
+            : ""
+        let finalText = ASRService.applyContinuousDictationFormatting(gaavText, precedingText: precedingText)
         let appInfo = self.getCurrentAppInfo()
 
         if saveToHistory, SettingsStore.shared.saveTranscriptionHistory {
@@ -2361,7 +2389,8 @@ struct ContentView: View {
                 rawText: text,
                 processedText: finalText,
                 appName: appInfo.name,
-                windowTitle: appInfo.windowTitle
+                windowTitle: appInfo.windowTitle,
+                wasAIProcessed: false
             )
         }
 
@@ -2431,6 +2460,11 @@ struct ContentView: View {
         self.menuBarManager.setProcessing(false)
 
         finalText = ASRService.applyGAAVFormatting(finalText)
+        let precedingText = SettingsStore.shared.needsDictationFormattingContext
+            ? TypingService.textBeforeCursorInFocusedField()
+            : ""
+        finalText = ASRService.applyContinuousDictationFormatting(finalText, precedingText: precedingText)
+        self.recordingPrecedingText = ""
 
         if SettingsStore.shared.saveTranscriptionHistory {
             TranscriptionHistoryStore.shared.addEntry(
@@ -2438,6 +2472,7 @@ struct ContentView: View {
                 processedText: finalText,
                 appName: appInfo.name,
                 windowTitle: appInfo.windowTitle,
+                wasAIProcessed: postProcessingModel != nil && aiFallbackReason == nil,
                 processingModel: postProcessingModel,
                 aiProcessingError: aiFallbackReason
             )
