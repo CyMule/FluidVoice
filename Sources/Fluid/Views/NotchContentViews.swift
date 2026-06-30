@@ -157,6 +157,8 @@ class NotchContentState: ObservableObject {
     var onReprocessLastRequested: (() -> Void)?
     /// Called when the user requests copying the latest saved transcription entry.
     var onCopyLastRequested: (() -> Void)?
+    /// Called when the user requests re-pasting the latest saved transcription entry.
+    var onPasteLastRequested: (() -> Void)?
     /// Called when the user requests undoing AI processing for the latest entry.
     var onUndoLastAIRequested: (() -> Void)?
     /// Called when the user requests opening Preferences.

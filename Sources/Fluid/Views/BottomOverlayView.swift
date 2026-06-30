@@ -1539,6 +1539,10 @@ private struct BottomOverlayActionsMenuView: View {
         return !(processed.isEmpty && raw.isEmpty)
     }
 
+    private var canPasteLast: Bool {
+        self.canCopyLast
+    }
+
     private var canUndoLastAI: Bool {
         guard !self.contentState.isProcessing else { return false }
         guard let latest = self.latestEntry else { return false }
@@ -1627,6 +1631,15 @@ private struct BottomOverlayActionsMenuView: View {
                 enabled: self.canCopyLast
             ) {
                 self.contentState.onCopyLastRequested?()
+            }
+
+            self.actionRow(
+                title: "Paste Last Transcription",
+                icon: "arrow.down.doc",
+                rowID: "paste_last",
+                enabled: self.canPasteLast
+            ) {
+                self.contentState.onPasteLastRequested?()
             }
 
             Divider()

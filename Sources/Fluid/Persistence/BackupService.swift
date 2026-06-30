@@ -37,6 +37,9 @@ struct SettingsBackupPayload: Codable, Equatable {
     let rewriteModeSelectedProviderID: String
     let rewriteModeLinkedToGlobal: Bool
     let cancelRecordingHotkeyShortcut: HotkeyShortcut
+    // Optional so older backup files (which predate this setting) still decode.
+    let pasteLastTranscriptionHotkeyShortcut: HotkeyShortcut?
+    let pasteLastTranscriptionShortcutEnabled: Bool?
     let showThinkingTokens: Bool
     let hideFromDockAndAppSwitcher: Bool
     let showMainWindowAtLoginLaunch: Bool?

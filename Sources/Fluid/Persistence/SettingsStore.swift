@@ -2399,6 +2399,43 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    // MARK: - Paste Last Transcription Settings
+
+    /// Whether the "Paste Last Transcription" global hotkey is active. Opt-in and off by default.
+    var pasteLastTranscriptionShortcutEnabled: Bool {
+        get {
+            let value = self.defaults.object(forKey: Keys.pasteLastTranscriptionShortcutEnabled)
+            return value as? Bool ?? false
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.pasteLastTranscriptionShortcutEnabled)
+        }
+    }
+
+    /// The shortcut that re-inserts the most recent transcription into the focused field.
+    /// Unbound (nil) by default so it never collides with an existing shortcut until the user assigns one.
+    var pasteLastTranscriptionHotkeyShortcut: HotkeyShortcut? {
+        get {
+            if let data = defaults.data(forKey: Keys.pasteLastTranscriptionHotkeyShortcut),
+               let shortcut = try? JSONDecoder().decode(HotkeyShortcut.self, from: data)
+            {
+                return shortcut
+            }
+            return nil
+        }
+        set {
+            objectWillChange.send()
+            guard let newValue else {
+                self.defaults.removeObject(forKey: Keys.pasteLastTranscriptionHotkeyShortcut)
+                return
+            }
+            if let data = try? JSONEncoder().encode(newValue) {
+                self.defaults.set(data, forKey: Keys.pasteLastTranscriptionHotkeyShortcut)
+            }
+        }
+    }
+
     var commandModeConfirmBeforeExecute: Bool {
         get {
             // Default to true (safer - ask before running commands)
@@ -2725,6 +2762,8 @@ final class SettingsStore: ObservableObject {
             rewriteModeSelectedProviderID: self.rewriteModeSelectedProviderID,
             rewriteModeLinkedToGlobal: self.rewriteModeLinkedToGlobal,
             cancelRecordingHotkeyShortcut: self.cancelRecordingHotkeyShortcut,
+            pasteLastTranscriptionHotkeyShortcut: self.pasteLastTranscriptionHotkeyShortcut,
+            pasteLastTranscriptionShortcutEnabled: self.pasteLastTranscriptionShortcutEnabled,
             showThinkingTokens: self.showThinkingTokens,
             hideFromDockAndAppSwitcher: self.hideFromDockAndAppSwitcher,
             showMainWindowAtLoginLaunch: self.showMainWindowAtLoginLaunch,
@@ -2816,6 +2855,10 @@ final class SettingsStore: ObservableObject {
         self.rewriteModeSelectedProviderID = payload.rewriteModeSelectedProviderID
         self.rewriteModeLinkedToGlobal = payload.rewriteModeLinkedToGlobal
         self.cancelRecordingHotkeyShortcut = payload.cancelRecordingHotkeyShortcut
+        self.pasteLastTranscriptionHotkeyShortcut = payload.pasteLastTranscriptionHotkeyShortcut
+        if let pasteLastTranscriptionShortcutEnabled = payload.pasteLastTranscriptionShortcutEnabled {
+            self.pasteLastTranscriptionShortcutEnabled = pasteLastTranscriptionShortcutEnabled
+        }
         self.showThinkingTokens = payload.showThinkingTokens
         self.hideFromDockAndAppSwitcher = payload.hideFromDockAndAppSwitcher
         self.showMainWindowAtLoginLaunch = payload.showMainWindowAtLoginLaunch ?? true
@@ -4367,6 +4410,8 @@ private extension SettingsStore {
         static let commandModeHotkeyShortcut = "CommandModeHotkeyShortcut"
         static let commandModeConfirmBeforeExecute = "CommandModeConfirmBeforeExecute"
         static let cancelRecordingHotkeyShortcut = "CancelRecordingHotkeyShortcut"
+        static let pasteLastTranscriptionHotkeyShortcut = "PasteLastTranscriptionHotkeyShortcut"
+        static let pasteLastTranscriptionShortcutEnabled = "PasteLastTranscriptionShortcutEnabled"
         static let commandModeLinkedToGlobal = "CommandModeLinkedToGlobal"
         static let commandModeShortcutEnabled = "CommandModeShortcutEnabled"
 

@@ -69,6 +69,7 @@ final class GlobalHotkeyManager: NSObject {
     private var isRewriteRecordingProvider: (() -> Bool)?
     private var isShortcutCaptureActiveProvider: (() -> Bool)?
     private var cancelCallback: (() -> Bool)? // Returns true if handled
+    private var pasteLastTranscriptionCallback: (() -> Void)?
     private var hotkeyMode: HotkeyActivationMode = SettingsStore.shared.hotkeyMode
     private let automaticTapThresholdSeconds: TimeInterval = 0.4
 
@@ -414,6 +415,10 @@ final class GlobalHotkeyManager: NSObject {
         self.cancelCallback = callback
     }
 
+    func setPasteLastTranscriptionCallback(_ callback: @escaping () -> Void) {
+        self.pasteLastTranscriptionCallback = callback
+    }
+
     private func setupGlobalHotkeyWithRetry() {
         for attempt in 1...self.maxRetryAttempts {
             DebugLogger.shared.debug("Setup attempt \(attempt)/\(self.maxRetryAttempts)", source: "GlobalHotkeyManager")
@@ -647,6 +652,15 @@ final class GlobalHotkeyManager: NSObject {
                 if handled {
                     return nil // Consume event only if we did something
                 }
+            }
+
+            // Check the "paste last transcription" shortcut (a one-shot action, like cancel).
+            if SettingsStore.shared.pasteLastTranscriptionShortcutEnabled,
+               let pasteShortcut = SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut,
+               pasteShortcut.matches(keyCode: keyCode, modifiers: eventModifiers)
+            {
+                self.triggerPasteLastTranscription()
+                return nil
             }
 
             if let assignment = self.promptShortcutAssignments.first(where: { $0.shortcut.matches(keyCode: keyCode, modifiers: eventModifiers) }) {
@@ -1649,6 +1663,23 @@ final class GlobalHotkeyManager: NSObject {
                 source: "GlobalHotkeyManager"
             )
             await self.rewriteModeCallback?()
+        }
+    }
+
+    private func triggerPasteLastTranscription() {
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            guard self.canTriggerRecordingAction("Paste last transcription hotkey") else { return }
+            // Re-pasting mid-recording would be surprising; ignore while capture is active.
+            guard !self.asrService.isRunning else {
+                DebugLogger.shared.info(
+                    "Paste last transcription hotkey ignored - recording in progress",
+                    source: "GlobalHotkeyManager"
+                )
+                return
+            }
+            DebugLogger.shared.info("Paste last transcription hotkey triggered", source: "GlobalHotkeyManager")
+            self.pasteLastTranscriptionCallback?()
         }
     }
 

@@ -40,8 +40,10 @@ struct SettingsView: View {
     @Binding var commandModeShortcut: HotkeyShortcut?
     @Binding var rewriteShortcut: HotkeyShortcut
     @Binding var cancelRecordingShortcut: HotkeyShortcut
+    @Binding var pasteLastTranscriptionShortcut: HotkeyShortcut?
     @Binding var commandModeShortcutEnabled: Bool
     @Binding var rewriteShortcutEnabled: Bool
+    @Binding var pasteLastTranscriptionShortcutEnabled: Bool
     @Binding var hotkeyManagerInitialized: Bool
     @Binding var hotkeyMode: HotkeyActivationMode
     @Binding var enableStreamingPreview: Bool
@@ -755,6 +757,35 @@ struct SettingsView: View {
                                             DebugLogger.shared.debug("Starting to record new cancel shortcut", source: "SettingsView")
                                             self.shortcutRecordingMessage = nil
                                             self.activeShortcutRecordingTarget = .cancel
+                                        }
+                                    )
+                                    Divider().opacity(0.2).padding(.vertical, 4)
+
+                                    self.shortcutRow(
+                                        content: .init(
+                                            icon: "arrow.down.doc",
+                                            iconColor: .secondary,
+                                            title: "Paste Last Transcription",
+                                            description: "Re-insert your most recent transcription without using the clipboard"
+                                        ),
+                                        shortcut: self.pasteLastTranscriptionShortcut,
+                                        isRecording: self.isRecording(.pasteLast),
+                                        isAnyRecordingActive: self.isRecordingAnyShortcut,
+                                        recordingMessage: self.isRecording(.pasteLast) ? self.shortcutRecordingMessage : nil,
+                                        isEnabled: self.$pasteLastTranscriptionShortcutEnabled,
+                                        requiresShortcutToEnable: true,
+                                        onChangePressed: {
+                                            DebugLogger.shared.debug("Starting to record new paste last transcription shortcut", source: "SettingsView")
+                                            self.shortcutRecordingMessage = nil
+                                            self.activeShortcutRecordingTarget = .pasteLast
+                                        },
+                                        onRemovePressed: {
+                                            if self.activeShortcutRecordingTarget == .pasteLast {
+                                                self.shortcutRecordingMessage = nil
+                                                self.activeShortcutRecordingTarget = nil
+                                            }
+                                            self.pasteLastTranscriptionShortcut = nil
+                                            self.pasteLastTranscriptionShortcutEnabled = false
                                         }
                                     )
                                 }

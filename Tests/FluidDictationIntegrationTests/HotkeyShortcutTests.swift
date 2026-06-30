@@ -6,6 +6,8 @@ import XCTest
 final class HotkeyShortcutTests: XCTestCase {
     private let legacyHotkeyShortcutKey = "HotkeyShortcutKey"
     private let primaryDictationShortcutsKey = "PrimaryDictationShortcuts"
+    private let pasteLastTranscriptionShortcutKey = "PasteLastTranscriptionHotkeyShortcut"
+    private let pasteLastTranscriptionEnabledKey = "PasteLastTranscriptionShortcutEnabled"
 
     func testLegacyKeyboardShortcutPayloadDefaultsToKeyboardKind() throws {
         let json = #"{"keyCode":61,"modifierFlagsRawValue":0}"#
@@ -107,6 +109,37 @@ final class HotkeyShortcutTests: XCTestCase {
                 SettingsStore.shared.primaryDictationShortcutDisplayString,
                 "\(mouseShortcut.displayString) / \(keyboardShortcut.displayString)"
             )
+        }
+    }
+
+    func testPasteLastTranscriptionShortcutDefaultsToUnboundAndDisabled() throws {
+        try self.withRestoredDefaults(keys: [
+            self.pasteLastTranscriptionShortcutKey,
+            self.pasteLastTranscriptionEnabledKey,
+        ]) {
+            UserDefaults.standard.removeObject(forKey: self.pasteLastTranscriptionShortcutKey)
+            UserDefaults.standard.removeObject(forKey: self.pasteLastTranscriptionEnabledKey)
+
+            XCTAssertNil(SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut)
+            XCTAssertFalse(SettingsStore.shared.pasteLastTranscriptionShortcutEnabled)
+        }
+    }
+
+    func testPasteLastTranscriptionShortcutPersistsAndClears() throws {
+        try self.withRestoredDefaults(keys: [
+            self.pasteLastTranscriptionShortcutKey,
+            self.pasteLastTranscriptionEnabledKey,
+        ]) {
+            let shortcut = HotkeyShortcut(keyCode: 9, modifierFlags: [.command, .shift])
+            SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut = shortcut
+            SettingsStore.shared.pasteLastTranscriptionShortcutEnabled = true
+
+            XCTAssertEqual(SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut, shortcut)
+            XCTAssertTrue(SettingsStore.shared.pasteLastTranscriptionShortcutEnabled)
+
+            // Removing the shortcut returns to the unbound state.
+            SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut = nil
+            XCTAssertNil(SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut)
         }
     }
 
