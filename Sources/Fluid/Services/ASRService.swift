@@ -1511,9 +1511,12 @@ final class ASRService: ObservableObject {
 
             // Do not update self.finalText here to avoid instant binding insert in playground
             let textWithoutFillers = ASRService.removeFillerWords(result.text)
-            let outputText = useDictionaryTrainingPath
+            let dictionaryText = useDictionaryTrainingPath
                 ? textWithoutFillers
                 : ASRService.applyCustomDictionary(textWithoutFillers)
+            let outputText = useDictionaryTrainingPath
+                ? dictionaryText
+                : ASRService.applySpokenPunctuationFormatting(dictionaryText)
             if !useDictionaryTrainingPath {
                 self.recordWordBoostHitIfAny(transcribedText: outputText)
             }
@@ -1602,7 +1605,9 @@ final class ASRService: ObservableObject {
             self.modelPreparationPhase = nil
         }
 
-        let cleanedText = ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
+        let cleanedText = ASRService.applySpokenPunctuationFormatting(
+            ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
+        )
         self.recordWordBoostHitIfAny(transcribedText: cleanedText)
         return ASRTranscriptionResult(text: cleanedText, confidence: result.confidence)
     }
@@ -1644,7 +1649,9 @@ final class ASRService: ObservableObject {
             self.modelPreparationPhase = nil
         }
 
-        let cleanedText = ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
+        let cleanedText = ASRService.applySpokenPunctuationFormatting(
+            ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
+        )
         self.recordWordBoostHitIfAny(transcribedText: cleanedText)
         return (ASRTranscriptionResult(text: cleanedText, confidence: result.confidence), estimatedSamples)
     }
@@ -3205,7 +3212,9 @@ final class ASRService: ObservableObject {
                 source: "ASRService"
             )
             let rawText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            let newText = ASRService.applyCustomDictionary(ASRService.removeFillerWords(rawText))
+            let newText = ASRService.applySpokenPunctuationFormatting(
+                ASRService.applyCustomDictionary(ASRService.removeFillerWords(rawText))
+            )
             self.recordWordBoostHitIfAny(transcribedText: newText)
             self.benchmarkCompletedStreamingChunks += 1
             self.lastProcessedSampleCount = chunk.count

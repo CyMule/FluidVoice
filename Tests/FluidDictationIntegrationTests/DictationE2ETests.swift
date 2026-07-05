@@ -19,6 +19,7 @@ final class DictationE2ETests: XCTestCase {
     private let availableModelsByProviderKey = "AvailableModelsByProvider"
     private let selectedModelByProviderKey = "SelectedModelByProvider"
     private let customDictionaryEntriesKey = "CustomDictionaryEntries"
+    private let autoConvertPunctuationEnabledKey = "AutoConvertPunctuationEnabled"
     private let commandModeLinkedToGlobalKey = "CommandModeLinkedToGlobal"
     private let commandModeSelectedProviderIDKey = "CommandModeSelectedProviderID"
     private let commandModeSelectedModelKey = "CommandModeSelectedModel"
@@ -368,6 +369,82 @@ final class DictationE2ETests: XCTestCase {
         )
     }
 
+    func testSpokenPunctuationFormattingConvertsCommonPhrases() {
+        self.withRestoredDefaults(keys: [self.autoConvertPunctuationEnabledKey]) {
+            UserDefaults.standard.set(true, forKey: self.autoConvertPunctuationEnabledKey)
+
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting(
+                    "Hello comma world question mark open paren yes close paren quote done quote"
+                ),
+                "Hello, world? (yes) \"done\""
+            )
+        }
+    }
+
+    func testSpokenPunctuationFormattingConvertsCodeAndContactPunctuation() {
+        self.withRestoredDefaults(keys: [self.autoConvertPunctuationEnabledKey]) {
+            UserDefaults.standard.set(true, forKey: self.autoConvertPunctuationEnabledKey)
+
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting(
+                    "email at sign example dot com slash help underscore me"
+                ),
+                "email@example.com/help_me"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("x hyphen ray costs 50 percent"),
+                "x-ray costs 50%"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("a plus b equals c"),
+                "a + b = c"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("plus I need the normal word"),
+                "plus I need the normal word"
+            )
+        }
+    }
+
+    func testSpokenPunctuationFormattingCleansSymbolCommaNoise() {
+        self.withRestoredDefaults(keys: [self.autoConvertPunctuationEnabledKey]) {
+            UserDefaults.standard.set(true, forKey: self.autoConvertPunctuationEnabledKey)
+
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("hyphen comma hyphen comma hyphen"),
+                "---"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("-,-,-"),
+                "---"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("-, -, -"),
+                "- - -"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("+, =, %"),
+                "+ = %"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("50, %"),
+                "50%"
+            )
+        }
+    }
+
+    func testSpokenPunctuationFormattingRespectsSetting() {
+        self.withRestoredDefaults(keys: [self.autoConvertPunctuationEnabledKey]) {
+            UserDefaults.standard.set(false, forKey: self.autoConvertPunctuationEnabledKey)
+
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("Hello comma world question mark"),
+                "Hello comma world question mark"
+            )
+        }
+    }
+
     func testTerminalLiteralAutocompleteSpacingRemovesTrailingSpaceForTargetApps() {
         XCTAssertEqual(
             ASRService.applyTerminalLiteralAutocompleteSpacing(
@@ -578,6 +655,11 @@ final class DictationE2ETests: XCTestCase {
 
     func testDictationEndToEnd_whisperTiny_transcribesFixture() async throws {
         // Arrange
+        // App-hosted test writes to the real host UserDefaults; restore the prior
+        // selection so the next app launch doesn't silently come up on Whisper Tiny.
+        let priorSpeechModel = SettingsStore.shared.selectedSpeechModel
+        defer { SettingsStore.shared.selectedSpeechModel = priorSpeechModel }
+
         SettingsStore.shared.shareAnonymousAnalytics = false
         SettingsStore.shared.selectedSpeechModel = .whisperTiny
 

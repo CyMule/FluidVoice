@@ -2786,7 +2786,8 @@ struct ContentView: View {
         NotchOverlayManager.shared.updateTranscriptionText("Reprocessing...")
         await Task.yield()
 
-        var finalText = transcribedText
+        let normalizedTranscribedText = ASRService.applySpokenPunctuationFormatting(transcribedText)
+        var finalText = normalizedTranscribedText
         var aiFallbackReason: String?
         var postProcessingModel: String?
         let appInfo = self.getCurrentAppInfo()
@@ -2795,7 +2796,7 @@ struct ContentView: View {
             postProcessingModel = self.currentDictationAIModelInfo().model
             do {
                 finalText = try await self.processTextWithAI(
-                    transcribedText,
+                    normalizedTranscribedText,
                     dictationSlot: .primary
                 )
             } catch {
@@ -2805,7 +2806,7 @@ struct ContentView: View {
                 )
                 aiFallbackReason = error.localizedDescription
                 NotificationService.showAIProcessingFallback(error: error.localizedDescription)
-                finalText = transcribedText
+                finalText = normalizedTranscribedText
             }
         }
 
