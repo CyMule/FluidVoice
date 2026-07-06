@@ -1018,11 +1018,13 @@ struct ContentView: View {
             }
         }
 
-        let configuredShortcuts: [(ShortcutRecordingTarget, HotkeyShortcut)] = [
-            (.secondaryDictation, self.promptModeHotkeyShortcut),
+        var configuredShortcuts: [(ShortcutRecordingTarget, HotkeyShortcut)] = [
             (.edit, self.rewriteModeHotkeyShortcut),
             (.cancel, self.cancelRecordingHotkeyShortcut),
         ]
+        if self.isPromptModeShortcutEnabled {
+            configuredShortcuts.append((.secondaryDictation, self.promptModeHotkeyShortcut))
+        }
         let optionalConfiguredShortcuts: [(ShortcutRecordingTarget, HotkeyShortcut?)] = [
             (.command, self.commandModeHotkeyShortcut),
             (.pasteLast, self.pasteLastTranscriptionHotkeyShortcut),

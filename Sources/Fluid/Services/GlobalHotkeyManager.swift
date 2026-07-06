@@ -23,6 +23,7 @@ private final nonisolated class HotkeyState: @unchecked Sendable {
     var isPromptAssignmentKeyPressed = false
     var pressedModifierKeyCodes: Set<UInt16> = []
     var modifierOnlyKeyDown = false
+    var activeModifierOnlyType: HotkeyHoldModeType?
     var otherKeyPressedDuringModifier = false
     var modifierPressStartTime: Date?
     var holdModeStartTriggeredTypes: Set<HotkeyHoldModeType> = []
@@ -130,6 +131,11 @@ final class GlobalHotkeyManager: NSObject {
     private nonisolated var modifierOnlyKeyDown: Bool {
         get { self.state.withLock { self.state.modifierOnlyKeyDown } }
         set { self.state.withLock { self.state.modifierOnlyKeyDown = newValue } }
+    }
+
+    private nonisolated var activeModifierOnlyType: HotkeyHoldModeType? {
+        get { self.state.withLock { self.state.activeModifierOnlyType } }
+        set { self.state.withLock { self.state.activeModifierOnlyType = newValue } }
     }
 
     private nonisolated var otherKeyPressedDuringModifier: Bool {
@@ -898,6 +904,14 @@ final class GlobalHotkeyManager: NSObject {
                 )
             }
 
+            for shortcut in self.primaryShortcuts where shortcut.isModifierOnlyShortcut {
+                if self.handleModifierOnlyShortcutFlagsChanged(
+                    behavior: self.primaryModifierOnlyBehavior(for: shortcut),
+                    keyCode: keyCode,
+                    modifiers: eventModifiers
+                ) { return nil }
+            }
+
             if self.handlePromptAssignmentFlagsChanged(keyCode: keyCode, modifiers: eventModifiers) { return nil }
 
             if self.handlePromptModeFlagsChanged(keyCode: keyCode, modifiers: eventModifiers) { return nil }
@@ -966,14 +980,6 @@ final class GlobalHotkeyManager: NSObject {
                 modifiers: eventModifiers
             ) { return nil }
 
-            for shortcut in self.primaryShortcuts where shortcut.isModifierOnlyShortcut {
-                if self.handleModifierOnlyShortcutFlagsChanged(
-                    behavior: self.primaryModifierOnlyBehavior(for: shortcut),
-                    keyCode: keyCode,
-                    modifiers: eventModifiers
-                ) { return nil }
-            }
-
         default:
             break
         }
@@ -1022,23 +1028,31 @@ final class GlobalHotkeyManager: NSObject {
             (.shift, [56, 60]),
         ]
 
-        var synchronizedKeyCodes = Set<UInt16>()
+        // Flags tell us a modifier family is active, not which physical side. Preserve the
+        // side-specific keys we already observed instead of rediscovering them from keyState.
+        var synchronizedKeyCodes = self.pressedModifierKeyCodes.filter { keyCode in
+            guard let flag = HotkeyShortcut.modifierFlag(forKeyCode: keyCode) else { return false }
+            return activeModifiers.contains(flag)
+        }
 
-        for (flag, keyCodes) in activeModifierGroups where activeModifiers.contains(flag) {
-            let livePressedKeyCodes = keyCodes.filter {
-                CGEventSource.keyState(.combinedSessionState, key: CGKeyCode($0))
-            }
+        guard let changedGroup = activeModifierGroups.first(where: { $0.0 == changedFlag }) else {
+            return synchronizedKeyCodes
+        }
 
-            if !livePressedKeyCodes.isEmpty {
-                synchronizedKeyCodes.formUnion(livePressedKeyCodes)
-                continue
-            }
-
-            // If the changed modifier family is active but the live key-state query did not yet
-            // reflect it, trust the current event's key code for this transition.
-            if flag == changedFlag {
+        if activeModifiers.contains(changedFlag) {
+            if synchronizedKeyCodes.contains(changedKeyCode) {
+                let siblingKeyCodes = changedGroup.1.filter { $0 != changedKeyCode }
+                let siblingIsTracked = siblingKeyCodes.contains { synchronizedKeyCodes.contains($0) }
+                if siblingIsTracked,
+                   !CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(changedKeyCode))
+                {
+                    synchronizedKeyCodes.remove(changedKeyCode)
+                }
+            } else {
                 synchronizedKeyCodes.insert(changedKeyCode)
             }
+        } else {
+            synchronizedKeyCodes.subtract(changedGroup.1)
         }
 
         return synchronizedKeyCodes
@@ -1322,6 +1336,7 @@ final class GlobalHotkeyManager: NSObject {
 
         self.pressedModifierKeyCodes = []
         self.modifierOnlyKeyDown = false
+        self.activeModifierOnlyType = nil
         self.otherKeyPressedDuringModifier = false
         self.modifierPressStartTime = nil
         self.clearAutomaticPressTracking()
@@ -1450,12 +1465,12 @@ final class GlobalHotkeyManager: NSObject {
                 behavior: .init(
                     shortcut: assignment.shortcut,
                     isEnabled: true,
-                    holdModeType: .promptMode,
+                    holdModeType: .promptAssignment,
                     holdStartMessage: "Prompt shortcut modifier held (hold mode) - starting",
                     holdReleaseMessage: "Prompt shortcut modifier released (hold mode) - stopping",
                     toggleIgnoredMessage: "Prompt shortcut modifier released but another key was pressed - ignoring",
-                    isModeKeyPressed: { self.isPromptModeKeyPressed },
-                    setModeKeyPressed: { self.isPromptModeKeyPressed = $0 },
+                    isModeKeyPressed: { self.isPromptAssignmentKeyPressed },
+                    setModeKeyPressed: { self.isPromptAssignmentKeyPressed = $0 },
                     onHoldStart: { self.triggerPromptSelection(assignment.selection) },
                     onToggleRelease: {
                         if self.asrService.isRunning {
@@ -1498,6 +1513,7 @@ final class GlobalHotkeyManager: NSObject {
             let pressedModifierKeyCodes = HotkeyShortcut.normalizedModifierKeyCodes(from: Array(self.pressedModifierKeyCodes))
             if pressedModifierKeyCodes == expectedModifierKeyCodes {
                 self.modifierOnlyKeyDown = true
+                self.activeModifierOnlyType = behavior.holdModeType
                 self.otherKeyPressedDuringModifier = false
                 self.modifierPressStartTime = Date()
 
@@ -1505,7 +1521,8 @@ final class GlobalHotkeyManager: NSObject {
                 return true
             }
 
-            if self.modifierOnlyKeyDown || behavior.isModeKeyPressed() {
+            let isActiveModifierOnlyPress = self.activeModifierOnlyType == behavior.holdModeType
+            if isActiveModifierOnlyPress || behavior.isModeKeyPressed() {
                 let extraModifierKeyCodes = pressedModifierKeyCodes.filter { !expectedModifierKeyCodes.contains($0) }
                 if !extraModifierKeyCodes.isEmpty {
                     self.markModifierOnlyPressInterrupted(
@@ -1514,7 +1531,7 @@ final class GlobalHotkeyManager: NSObject {
                 }
             }
 
-            guard self.modifierOnlyKeyDown || behavior.isModeKeyPressed(),
+            guard isActiveModifierOnlyPress || behavior.isModeKeyPressed(),
                   expectedModifierKeyCodes.contains(keyCode),
                   !pressedModifierKeyCodes.contains(keyCode)
             else {
@@ -1523,6 +1540,7 @@ final class GlobalHotkeyManager: NSObject {
 
             let wasCleanPress = !self.otherKeyPressedDuringModifier
             self.modifierOnlyKeyDown = false
+            self.activeModifierOnlyType = nil
             self.otherKeyPressedDuringModifier = false
             self.modifierPressStartTime = nil
 
@@ -1538,6 +1556,7 @@ final class GlobalHotkeyManager: NSObject {
 
         if relevantModifiers == expectedPressedModifiers {
             self.modifierOnlyKeyDown = true
+            self.activeModifierOnlyType = behavior.holdModeType
             self.otherKeyPressedDuringModifier = false
             self.modifierPressStartTime = Date()
 
@@ -1545,7 +1564,8 @@ final class GlobalHotkeyManager: NSObject {
             return true
         }
 
-        if self.modifierOnlyKeyDown || behavior.isModeKeyPressed() {
+        let isActiveModifierOnlyPress = self.activeModifierOnlyType == behavior.holdModeType
+        if isActiveModifierOnlyPress || behavior.isModeKeyPressed() {
             let unexpectedModifiers = relevantModifiers.subtracting(expectedPressedModifiers)
             if !unexpectedModifiers.isEmpty {
                 self.markModifierOnlyPressInterrupted(
@@ -1554,7 +1574,7 @@ final class GlobalHotkeyManager: NSObject {
             }
         }
 
-        guard self.modifierOnlyKeyDown || behavior.isModeKeyPressed(),
+        guard isActiveModifierOnlyPress || behavior.isModeKeyPressed(),
               keyCode == shortcut.keyCode,
               !relevantModifiers.contains(triggerFlag)
         else {
@@ -1563,6 +1583,7 @@ final class GlobalHotkeyManager: NSObject {
 
         let wasCleanPress = !self.otherKeyPressedDuringModifier
         self.modifierOnlyKeyDown = false
+        self.activeModifierOnlyType = nil
         self.otherKeyPressedDuringModifier = false
         self.modifierPressStartTime = nil
 
