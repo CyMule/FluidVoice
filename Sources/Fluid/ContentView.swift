@@ -2152,7 +2152,14 @@ struct ContentView: View {
 
             do {
                 let result = try await self.processTextWithAI(transcribedText, overrideSystemPrompt: promptTest.draftPromptText)
-                promptTest.lastOutputText = ASRService.applyGAAVFormatting(result)
+                let appInfo = self.recordingAppInfo ?? self.getCurrentAppInfo()
+                let literalFormattedResult = ASRService.applyDictationLiteralFormatting(
+                    result,
+                    appName: appInfo.name,
+                    bundleID: appInfo.bundleId,
+                    windowTitle: appInfo.windowTitle
+                )
+                promptTest.lastOutputText = ASRService.applyGAAVFormatting(literalFormattedResult)
             } catch {
                 DebugLogger.shared.error("Prompt test AI call failed: \(error.localizedDescription)", source: "ContentView")
                 promptTest.lastError = error.localizedDescription
@@ -2199,6 +2206,12 @@ struct ContentView: View {
         var aiFallbackReason: String?
         var postProcessingModel: String?
         let appInfo = self.recordingAppInfo ?? self.getCurrentAppInfo()
+        let normalizedTranscribedText = ASRService.applySpokenPunctuationFormatting(
+            transcribedText,
+            appName: appInfo.name,
+            bundleID: appInfo.bundleId,
+            windowTitle: appInfo.windowTitle
+        )
 
         let shouldUseAI = activeDictationSlot.map {
             DictationAIPostProcessingGate.isConfigured(for: $0, appBundleID: appInfo.bundleId)
@@ -2209,7 +2222,7 @@ struct ContentView: View {
             DebugLogger.shared.debug("Routing transcription through AI post-processing", source: "ContentView")
             let postProcessingModelInfo = self.currentDictationAIModelInfo()
             postProcessingModel = postProcessingModelInfo.model
-            let postProcessingInputChars = transcribedText.count
+            let postProcessingInputChars = normalizedTranscribedText.count
             let postProcessingStart = Date()
 
             // Update overlay text to show we're now refining (processing already true)
@@ -2222,7 +2235,7 @@ struct ContentView: View {
 
             do {
                 finalText = try await self.processTextWithAI(
-                    transcribedText,
+                    normalizedTranscribedText,
                     overrideSystemPrompt: promptOverride,
                     dictationSlot: activeDictationSlot
                 )
@@ -2245,7 +2258,7 @@ struct ContentView: View {
                 } else {
                     NotificationService.showAIProcessingFallback(error: error.localizedDescription)
                 }
-                finalText = transcribedText
+                finalText = normalizedTranscribedText
             }
             let postProcessingLatencyMs = Int((Date().timeIntervalSince(postProcessingStart) * 1000).rounded())
             AnalyticsService.shared.capture(
@@ -2265,15 +2278,28 @@ struct ContentView: View {
             NotchOverlayManager.shared.updateTranscriptionText("")
 
         } else {
-            finalText = transcribedText
+            finalText = normalizedTranscribedText
         }
 
+        // Normalize literal command and mention syntax after AI cleanup and before final user preferences.
+        finalText = ASRService.applyDictationLiteralFormatting(
+            finalText,
+            appName: appInfo.name,
+            bundleID: appInfo.bundleId,
+            windowTitle: appInfo.windowTitle
+        )
         // Apply GAAV formatting as the FINAL step (after AI post-processing)
         // This ensures the user's preference for no capitalization/period is respected
         finalText = ASRService.applyGAAVFormatting(finalText)
         // Apply Continuous Dictation Mode after GAAV so smart caps use the field
         // context captured at recording start, and the trailing space enables chaining.
         finalText = ASRService.applyContinuousDictationFormatting(finalText, precedingText: self.recordingPrecedingText)
+        finalText = ASRService.applyTerminalLiteralAutocompleteSpacing(
+            finalText,
+            appName: appInfo.name,
+            bundleID: appInfo.bundleId,
+            windowTitle: appInfo.windowTitle
+        )
         self.recordingPrecedingText = ""
         self.asr.finalText = finalText
         if route == .onboardingSandbox,
@@ -2287,6 +2313,12 @@ struct ContentView: View {
 
         DebugLogger.shared.info("Transcription finalized (chars: \(finalText.count))", source: "ContentView")
         let finalTextReadyAt = ProcessInfo.processInfo.systemUptime
+        let finalOutputPlan = ASRService.makeDictationLiteralOutputPlan(
+            for: finalText,
+            appName: appInfo.name,
+            bundleID: appInfo.bundleId,
+            windowTitle: appInfo.windowTitle
+        )
         self.appBench("transcription_finalized chars=\(finalText.count)")
         self.appBench("text_ready chars=\(finalText.count)")
 
@@ -2380,8 +2412,8 @@ struct ContentView: View {
             self.appBench(
                 "text_ready_to_type_request elapsedMs=\(Int(((ProcessInfo.processInfo.systemUptime - finalTextReadyAt) * 1000).rounded()))"
             )
-            self.asr.typeTextToActiveField(
-                finalText,
+            self.asr.typeOutputPlanToActiveField(
+                finalOutputPlan,
                 preferredTargetPID: typingTarget.pid,
                 textReadyAt: finalTextReadyAt
             )
@@ -2621,7 +2653,14 @@ struct ContentView: View {
             if typingTarget.shouldRestoreOriginalFocus {
                 await self.restoreFocusToRecordingTarget()
             }
-            self.asr.typeTextToActiveField(text, preferredTargetPID: typingTarget.pid)
+            let appInfo = self.getCurrentAppInfo()
+            let outputPlan = ASRService.makeDictationLiteralOutputPlan(
+                for: text,
+                appName: appInfo.name,
+                bundleID: appInfo.bundleId,
+                windowTitle: appInfo.windowTitle
+            )
+            self.asr.typeOutputPlanToActiveField(outputPlan, preferredTargetPID: typingTarget.pid)
             DebugLogger.shared.info("Actions: Pasted latest transcription into focused field", source: "ContentView")
         }
     }
@@ -2679,12 +2718,30 @@ struct ContentView: View {
             self.cancelPrewarmDictationIfNeeded()
         }
 
-        let gaavText = ASRService.applyGAAVFormatting(text)
+        let appInfo = self.getCurrentAppInfo()
+        let literalFormattedText = ASRService.applyDictationLiteralFormatting(
+            text,
+            appName: appInfo.name,
+            bundleID: appInfo.bundleId,
+            windowTitle: appInfo.windowTitle
+        )
+        let gaavText = ASRService.applyGAAVFormatting(literalFormattedText)
         let precedingText = SettingsStore.shared.needsDictationFormattingContext
             ? TypingService.textBeforeCursorInFocusedField()
             : ""
-        let finalText = ASRService.applyContinuousDictationFormatting(gaavText, precedingText: precedingText)
-        let appInfo = self.getCurrentAppInfo()
+        var finalText = ASRService.applyContinuousDictationFormatting(gaavText, precedingText: precedingText)
+        finalText = ASRService.applyTerminalLiteralAutocompleteSpacing(
+            finalText,
+            appName: appInfo.name,
+            bundleID: appInfo.bundleId,
+            windowTitle: appInfo.windowTitle
+        )
+        let outputPlan = ASRService.makeDictationLiteralOutputPlan(
+            for: finalText,
+            appName: appInfo.name,
+            bundleID: appInfo.bundleId,
+            windowTitle: appInfo.windowTitle
+        )
 
         if saveToHistory, SettingsStore.shared.saveTranscriptionHistory {
             TranscriptionHistoryStore.shared.addEntry(
@@ -2713,8 +2770,8 @@ struct ContentView: View {
             if typingTarget.shouldRestoreOriginalFocus {
                 await self.restoreFocusToRecordingTarget()
             }
-            self.asr.typeTextToActiveField(
-                finalText,
+            self.asr.typeOutputPlanToActiveField(
+                outputPlan,
                 preferredTargetPID: typingTarget.pid
             )
         }
@@ -2735,16 +2792,22 @@ struct ContentView: View {
         NotchOverlayManager.shared.updateTranscriptionText("Reprocessing...")
         await Task.yield()
 
-        var finalText = transcribedText
         var aiFallbackReason: String?
         var postProcessingModel: String?
         let appInfo = self.getCurrentAppInfo()
+        let normalizedTranscribedText = ASRService.applySpokenPunctuationFormatting(
+            transcribedText,
+            appName: appInfo.name,
+            bundleID: appInfo.bundleId,
+            windowTitle: appInfo.windowTitle
+        )
+        var finalText = normalizedTranscribedText
         let shouldUseAI = DictationAIPostProcessingGate.isConfigured(for: .primary, appBundleID: appInfo.bundleId)
         if shouldUseAI {
             postProcessingModel = self.currentDictationAIModelInfo().model
             do {
                 finalText = try await self.processTextWithAI(
-                    transcribedText,
+                    normalizedTranscribedText,
                     dictationSlot: .primary
                 )
             } catch {
@@ -2754,18 +2817,36 @@ struct ContentView: View {
                 )
                 aiFallbackReason = error.localizedDescription
                 NotificationService.showAIProcessingFallback(error: error.localizedDescription)
-                finalText = transcribedText
+                finalText = normalizedTranscribedText
             }
         }
 
         NotchOverlayManager.shared.updateTranscriptionText("")
 
+        finalText = ASRService.applyDictationLiteralFormatting(
+            finalText,
+            appName: appInfo.name,
+            bundleID: appInfo.bundleId,
+            windowTitle: appInfo.windowTitle
+        )
         finalText = ASRService.applyGAAVFormatting(finalText)
         let precedingText = SettingsStore.shared.needsDictationFormattingContext
             ? TypingService.textBeforeCursorInFocusedField()
             : ""
         finalText = ASRService.applyContinuousDictationFormatting(finalText, precedingText: precedingText)
+        finalText = ASRService.applyTerminalLiteralAutocompleteSpacing(
+            finalText,
+            appName: appInfo.name,
+            bundleID: appInfo.bundleId,
+            windowTitle: appInfo.windowTitle
+        )
         self.recordingPrecedingText = ""
+        let outputPlan = ASRService.makeDictationLiteralOutputPlan(
+            for: finalText,
+            appName: appInfo.name,
+            bundleID: appInfo.bundleId,
+            windowTitle: appInfo.windowTitle
+        )
 
         if SettingsStore.shared.saveTranscriptionHistory {
             TranscriptionHistoryStore.shared.addEntry(
@@ -2802,8 +2883,8 @@ struct ContentView: View {
             if typingTarget.shouldRestoreOriginalFocus {
                 await self.restoreFocusToRecordingTarget()
             }
-            self.asr.typeTextToActiveField(
-                finalText,
+            self.asr.typeOutputPlanToActiveField(
+                outputPlan,
                 preferredTargetPID: typingTarget.pid
             )
         }

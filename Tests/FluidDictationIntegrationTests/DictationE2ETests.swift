@@ -19,6 +19,7 @@ final class DictationE2ETests: XCTestCase {
     private let availableModelsByProviderKey = "AvailableModelsByProvider"
     private let selectedModelByProviderKey = "SelectedModelByProvider"
     private let customDictionaryEntriesKey = "CustomDictionaryEntries"
+    private let autoConvertPunctuationEnabledKey = "AutoConvertPunctuationEnabled"
     private let commandModeLinkedToGlobalKey = "CommandModeLinkedToGlobal"
     private let commandModeSelectedProviderIDKey = "CommandModeSelectedProviderID"
     private let commandModeSelectedModelKey = "CommandModeSelectedModel"
@@ -261,6 +262,337 @@ final class DictationE2ETests: XCTestCase {
         }
     }
 
+    func testSlashCommandFormattingNormalizesSpokenAndLiteralCommands() {
+        XCTAssertEqual(
+            ASRService.applySlashCommandFormatting("Run slash status and then / model."),
+            "Run /status and then /model."
+        )
+        XCTAssertEqual(
+            ASRService.applySlashCommandFormatting("Type forward slash fix-ci."),
+            "Type /fix-ci."
+        )
+        XCTAssertEqual(
+            ASRService.applySlashCommandFormatting("slash compact"),
+            "/compact"
+        )
+    }
+
+    func testSlashCommandFormattingLeavesNonCommandSlashUsageAlone() {
+        let text = "Use 1/2 and and/or. Open src slash services. Go to https slash slash example dot com. Slash and burn."
+
+        XCTAssertEqual(
+            ASRService.applySlashCommandFormatting(text),
+            text
+        )
+    }
+
+    func testMentionFormattingExplicitPhrasesWorkWithoutAppContext() {
+        XCTAssertEqual(
+            ASRService.applyMentionFormatting("tag Paul"),
+            "@Paul"
+        )
+        XCTAssertEqual(
+            ASRService.applyMentionFormatting("mention Paul Heinz, please"),
+            "@Paul Heinz, please"
+        )
+        XCTAssertEqual(
+            ASRService.applyMentionFormatting("at sign maxgaav"),
+            "@maxgaav"
+        )
+        XCTAssertEqual(
+            ASRService.applyMentionFormatting("at the rate Sarah"),
+            "@Sarah"
+        )
+        XCTAssertEqual(
+            ASRService.applyMentionFormatting("mention Paul please"),
+            "@Paul please"
+        )
+        XCTAssertEqual(
+            ASRService.applyMentionFormatting("tag Paul tomorrow"),
+            "@Paul tomorrow"
+        )
+    }
+
+    func testMentionFormattingRelaxedAtNameRequiresMentionAppContext() {
+        XCTAssertEqual(
+            ASRService.applyMentionFormatting(
+                "at Paul can you check this",
+                appName: "Slack",
+                bundleID: "com.tinyspeck.slackmacgap"
+            ),
+            "@Paul can you check this"
+        )
+        XCTAssertEqual(
+            ASRService.applyMentionFormatting(
+                "hey at Paul Heinz can you check this",
+                appName: "Discord",
+                bundleID: "com.hnc.Discord"
+            ),
+            "hey @Paul Heinz can you check this"
+        )
+        XCTAssertEqual(
+            ASRService.applyMentionFormatting("at Paul can you check this", appName: "Notes", bundleID: "com.apple.Notes"),
+            "at Paul can you check this"
+        )
+    }
+
+    func testMentionFormattingLeavesProseAlone() {
+        let text = "I am at the store. Meet me at lunch. I am at Paul. Look at Paul's message."
+
+        XCTAssertEqual(
+            ASRService.applyMentionFormatting(text, appName: "Slack", bundleID: "com.tinyspeck.slackmacgap"),
+            text
+        )
+    }
+
+    func testMentionOutputPlanDoesNotAutoConfirmAutocomplete() {
+        let plan = ASRService.makeDictationLiteralOutputPlan(
+            for: "@Paul can you check this",
+            appName: "Slack",
+            bundleID: "com.tinyspeck.slackmacgap"
+        )
+
+        XCTAssertEqual(plan.steps, [.text("@Paul can you check this")])
+        XCTAssertEqual(plan.plainText, "@Paul can you check this")
+    }
+
+    func testMentionOutputPlanStaysPlainOutsideMentionApps() {
+        let text = "@Paul can you check this"
+
+        XCTAssertEqual(
+            ASRService.makeDictationLiteralOutputPlan(
+                for: text,
+                appName: "Notes",
+                bundleID: "com.apple.Notes"
+            ).steps,
+            [.text(text)]
+        )
+    }
+
+    func testSpokenPunctuationFormattingConvertsCommonPhrases() {
+        self.withRestoredDefaults(keys: [self.autoConvertPunctuationEnabledKey]) {
+            UserDefaults.standard.set(true, forKey: self.autoConvertPunctuationEnabledKey)
+
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting(
+                    "Hello comma world question mark open paren yes close paren quote done quote"
+                ),
+                "Hello, world? (yes) \"done\""
+            )
+        }
+    }
+
+    func testSpokenPunctuationFormattingConvertsCodeAndContactPunctuation() {
+        self.withRestoredDefaults(keys: [self.autoConvertPunctuationEnabledKey]) {
+            UserDefaults.standard.set(true, forKey: self.autoConvertPunctuationEnabledKey)
+
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting(
+                    "email at the rate example dot com slash help underscore me"
+                ),
+                "email@example.com/help_me"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting(
+                    "email at sign example dot com",
+                    appName: "Codex",
+                    bundleID: "com.openai.codex"
+                ),
+                "email@example.com"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("email at sign example"),
+                "email at sign example"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("x hyphen ray costs 50 percent"),
+                "x-ray costs 50%"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("a plus b equals c"),
+                "a + b = c"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("plus I need the normal word"),
+                "plus I need the normal word"
+            )
+        }
+    }
+
+    func testSpokenPunctuationFormattingKeepsBareDotInProse() {
+        self.withRestoredDefaults(keys: [self.autoConvertPunctuationEnabledKey]) {
+            UserDefaults.standard.set(true, forKey: self.autoConvertPunctuationEnabledKey)
+
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("the polka dot dress"),
+                "the polka dot dress"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("example dot com"),
+                "example.com"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("version 1 dot 2"),
+                "version 1.2"
+            )
+        }
+    }
+
+    func testSpokenPunctuationFormattingPreservesSlashCommandSpacing() {
+        self.withRestoredDefaults(keys: [self.autoConvertPunctuationEnabledKey]) {
+            UserDefaults.standard.set(true, forKey: self.autoConvertPunctuationEnabledKey)
+
+            let text = ASRService.applySpokenPunctuationFormatting("Run slash status and open src slash services")
+            XCTAssertEqual(text, "Run slash status and open src/services")
+            XCTAssertEqual(
+                ASRService.applySlashCommandFormatting(text),
+                "Run /status and open src/services"
+            )
+        }
+    }
+
+    func testSpokenPunctuationFormattingCleansGeneratedCommaNoise() {
+        self.withRestoredDefaults(keys: [self.autoConvertPunctuationEnabledKey]) {
+            UserDefaults.standard.set(true, forKey: self.autoConvertPunctuationEnabledKey)
+
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("hyphen comma hyphen comma hyphen"),
+                "---"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("50 comma percent"),
+                "50%"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("open bracket comma close bracket"),
+                "[]"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("open paren comma close paren"),
+                "()"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("question mark comma exclamation mark"),
+                "?!"
+            )
+        }
+    }
+
+    func testSpokenPunctuationFormattingPreservesExistingCommasNearSymbols() {
+        self.withRestoredDefaults(keys: [self.autoConvertPunctuationEnabledKey]) {
+            UserDefaults.standard.set(true, forKey: self.autoConvertPunctuationEnabledKey)
+
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("Thanks, @Sam"),
+                "Thanks, @Sam"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("Use C++, now"),
+                "Use C++, now"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("-,-,-"),
+                "-,-,-"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("50, %"),
+                "50, %"
+            )
+        }
+    }
+
+    func testSpokenPunctuationFormattingRespectsSetting() {
+        self.withRestoredDefaults(keys: [self.autoConvertPunctuationEnabledKey]) {
+            UserDefaults.standard.set(false, forKey: self.autoConvertPunctuationEnabledKey)
+
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("Hello comma world question mark"),
+                "Hello comma world question mark"
+            )
+        }
+    }
+
+    func testTerminalLiteralAutocompleteSpacingRemovesTrailingSpaceForTargetApps() {
+        XCTAssertEqual(
+            ASRService.applyTerminalLiteralAutocompleteSpacing(
+                "/model ",
+                appName: "Codex",
+                bundleID: "com.openai.codex"
+            ),
+            "/model"
+        )
+        XCTAssertEqual(
+            ASRService.applyTerminalLiteralAutocompleteSpacing(
+                "hey @Paul Heinz ",
+                appName: "Slack",
+                bundleID: "com.tinyspeck.slackmacgap"
+            ),
+            "hey @Paul Heinz"
+        )
+        XCTAssertEqual(
+            ASRService.applyTerminalLiteralAutocompleteSpacing(
+                " @Paul ",
+                appName: "Slack",
+                bundleID: "com.tinyspeck.slackmacgap"
+            ),
+            " @Paul"
+        )
+        XCTAssertEqual(
+            ASRService.makeDictationLiteralOutputPlan(
+                for: "@ross.winn ",
+                appName: "Discord",
+                bundleID: "com.hnc.Discord"
+            ).plainText,
+            "@ross.winn"
+        )
+    }
+
+    func testTerminalLiteralAutocompleteSpacingLeavesNonAutocompleteTextAlone() {
+        XCTAssertEqual(
+            ASRService.applyTerminalLiteralAutocompleteSpacing(
+                "/model ",
+                appName: "Notes",
+                bundleID: "com.apple.Notes"
+            ),
+            "/model "
+        )
+        XCTAssertEqual(
+            ASRService.applyTerminalLiteralAutocompleteSpacing(
+                "Run /status please ",
+                appName: "Codex",
+                bundleID: "com.openai.codex"
+            ),
+            "Run /status please "
+        )
+        XCTAssertEqual(
+            ASRService.applyTerminalLiteralAutocompleteSpacing(
+                "@Paul can you check this ",
+                appName: "Slack",
+                bundleID: "com.tinyspeck.slackmacgap"
+            ),
+            "@Paul can you check this "
+        )
+    }
+
+    func testSlashCommandOutputPlanDoesNotAutoConfirmAutocomplete() {
+        XCTAssertEqual(
+            ASRService.makeDictationLiteralOutputPlan(
+                for: "/goal update the plan",
+                appName: "Codex",
+                bundleID: "com.openai.codex"
+            ).steps,
+            [.text("/goal update the plan")]
+        )
+        XCTAssertEqual(
+            ASRService.makeDictationLiteralOutputPlan(
+                for: "Run /status please",
+                appName: "Codex",
+                bundleID: "com.openai.codex"
+            ).steps,
+            [.text("Run /status please")]
+        )
+    }
+
     func testDictionaryTrainingNormalizesSamplesAndIgnoresIntendedText() {
         let triggers = CustomDictionaryTrainingMerge.normalizedTriggers(
             from: [" Fluid Voice. ", "FluidVoice", "fluid voice", " "],
@@ -390,6 +722,11 @@ final class DictationE2ETests: XCTestCase {
 
     func testDictationEndToEnd_whisperTiny_transcribesFixture() async throws {
         // Arrange
+        // App-hosted test writes to the real host UserDefaults; restore the prior
+        // selection so the next app launch doesn't silently come up on Whisper Tiny.
+        let priorSpeechModel = SettingsStore.shared.selectedSpeechModel
+        defer { SettingsStore.shared.selectedSpeechModel = priorSpeechModel }
+
         SettingsStore.shared.shareAnonymousAnalytics = false
         SettingsStore.shared.selectedSpeechModel = .whisperTiny
 

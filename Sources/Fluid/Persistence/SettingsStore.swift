@@ -2860,6 +2860,7 @@ final class SettingsStore: ObservableObject {
             weekendsDontBreakStreak: self.weekendsDontBreakStreak,
             fillerWords: self.fillerWords,
             removeFillerWordsEnabled: self.removeFillerWordsEnabled,
+            autoConvertPunctuationEnabled: self.autoConvertPunctuationEnabled,
             gaavModeEnabled: self.gaavModeEnabled,
             gaavLowercaseFirstLetterEnabled: self.gaavLowercaseFirstLetterEnabled,
             gaavRemoveTrailingPeriodEnabled: self.gaavRemoveTrailingPeriodEnabled,
@@ -2970,6 +2971,9 @@ final class SettingsStore: ObservableObject {
         self.weekendsDontBreakStreak = payload.weekendsDontBreakStreak
         self.fillerWords = payload.fillerWords
         self.removeFillerWordsEnabled = payload.removeFillerWordsEnabled
+        if let autoConvertPunctuationEnabled = payload.autoConvertPunctuationEnabled {
+            self.autoConvertPunctuationEnabled = autoConvertPunctuationEnabled
+        }
         let restoredGaavModeEnabled = payload.gaavModeEnabled
         let restoredContinuousDictationModeEnabled = payload.continuousDictationModeEnabled ?? false
         self.gaavModeEnabled = restoredGaavModeEnabled
@@ -3567,6 +3571,14 @@ final class SettingsStore: ObservableObject {
         set {
             objectWillChange.send()
             self.defaults.set(newValue, forKey: Keys.removeFillerWordsEnabled)
+        }
+    }
+
+    var autoConvertPunctuationEnabled: Bool {
+        get { self.defaults.object(forKey: Keys.autoConvertPunctuationEnabled) as? Bool ?? true }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.autoConvertPunctuationEnabled)
         }
     }
 
@@ -4513,6 +4525,7 @@ private extension SettingsStore {
         // Filler Words
         static let fillerWords = "FillerWords"
         static let removeFillerWordsEnabled = "RemoveFillerWordsEnabled"
+        static let autoConvertPunctuationEnabled = "AutoConvertPunctuationEnabled"
 
         /// GAAV Mode (removes capitalization and trailing punctuation)
         static let gaavModeEnabled = "GAAVModeEnabled"

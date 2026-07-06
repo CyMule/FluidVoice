@@ -940,6 +940,16 @@ struct SettingsView: View {
                                     Divider().opacity(0.2)
 
                                     self.optionToggleRow(
+                                        title: "Auto-Convert Punctuation",
+                                        description: "Turn spoken punctuation like comma, question mark, slash, and at sign into symbols before AI cleanup.",
+                                        isOn: Binding(
+                                            get: { SettingsStore.shared.autoConvertPunctuationEnabled },
+                                            set: { SettingsStore.shared.autoConvertPunctuationEnabled = $0 }
+                                        )
+                                    )
+                                    Divider().opacity(0.2)
+
+                                    self.optionToggleRow(
                                         title: "Space Between Dictations",
                                         description: "Add spacing so consecutive dictations chain without manually pressing the spacebar.",
                                         isOn: Binding(

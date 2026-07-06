@@ -74,6 +74,7 @@ struct SettingsBackupPayload: Codable, Equatable {
     let weekendsDontBreakStreak: Bool
     let fillerWords: [String]
     let removeFillerWordsEnabled: Bool
+    let autoConvertPunctuationEnabled: Bool?
     let gaavModeEnabled: Bool
     let gaavLowercaseFirstLetterEnabled: Bool?
     let gaavRemoveTrailingPeriodEnabled: Bool?
