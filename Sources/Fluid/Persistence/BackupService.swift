@@ -123,6 +123,7 @@ final class BackupService {
 
     private init() {}
 
+    @MainActor
     func makeBackupDocument() -> AppBackupDocument {
         AppBackupDocument(
             schemaVersion: .current,
@@ -158,6 +159,7 @@ final class BackupService {
         }
     }
 
+    @MainActor
     func restore(_ document: AppBackupDocument) throws {
         try self.validate(document)
         SettingsStore.shared.restore(

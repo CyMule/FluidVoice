@@ -2303,10 +2303,9 @@ final class ASRService: ObservableObject {
         self.scheduleAudioRouteRecovery(reason: "default output changed")
     }
 
-    private func handleEngineConfigurationChanged(_ changedEngine: AVAudioEngine?) {
-        guard let changedEngine,
-              let currentEngine = self.engineStorage as? AVAudioEngine,
-              changedEngine === currentEngine
+    private func handleEngineConfigurationChanged(engineID changedEngineID: ObjectIdentifier) {
+        guard let currentEngine = self.engineStorage as? AVAudioEngine,
+              ObjectIdentifier(currentEngine) == changedEngineID
         else { return }
 
         self.scheduleAudioRouteRecovery(reason: "engine configuration changed")
@@ -2321,8 +2320,9 @@ final class ASRService: ObservableObject {
             queue: .main
         ) { [weak self] notification in
             guard let changedEngine = notification.object as? AVAudioEngine else { return }
-            Task { @MainActor [weak self, weak changedEngine] in
-                self?.handleEngineConfigurationChanged(changedEngine)
+            let changedEngineID = ObjectIdentifier(changedEngine)
+            DispatchQueue.main.async { [weak self] in
+                self?.handleEngineConfigurationChanged(engineID: changedEngineID)
             }
         }
     }
@@ -3560,7 +3560,7 @@ private extension ASRService {
 // pipeline owns timestamp trimming, 16 kHz conversion, levels, and session-safe
 // delivery without touching ASRService from a realtime callback.
 
-private final nonisolated class AudioCapturePipeline: @unchecked Sendable {
+private final class AudioCapturePipeline: @unchecked Sendable {
     private let audioBuffer: ThreadSafeAudioBuffer
     private let onFirstAudio: (Int, Int, Int, Double, Int, Int) -> Void
     private let onLevel: (CGFloat) -> Void

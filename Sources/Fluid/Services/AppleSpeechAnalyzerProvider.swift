@@ -6,6 +6,7 @@ import Foundation
 import Speech
 #endif
 
+#if compiler(>=6.2)
 // MARK: - Apple Speech Analyzer Provider (macOS 26+)
 
 /// A TranscriptionProvider that uses Apple's new SpeechAnalyzer API (macOS 26+).
@@ -306,6 +307,39 @@ final class AppleSpeechAnalyzerProvider: TranscriptionProvider {
         return buffer
     }
 }
+#else
+// MARK: - Apple Speech Analyzer Provider Stub
+
+@available(macOS 26.0, *)
+final class AppleSpeechAnalyzerProvider: TranscriptionProvider {
+    var name: String { "Apple Speech (macOS 26+)" }
+    var isAvailable: Bool { false }
+    var isReady: Bool { false }
+    var shouldClearCacheAfterCancellation: Bool { false }
+
+    init() {}
+
+    func prepare(progressHandler _: ((ModelPreparationProgress) -> Void)?) async throws {
+        throw NSError(
+            domain: "AppleSpeechAnalyzerProvider",
+            code: 100,
+            userInfo: [NSLocalizedDescriptionKey: "Apple Speech Analyzer requires a newer Xcode SDK."]
+        )
+    }
+
+    func transcribe(_: [Float]) async throws -> ASRTranscriptionResult {
+        throw NSError(
+            domain: "AppleSpeechAnalyzerProvider",
+            code: 101,
+            userInfo: [NSLocalizedDescriptionKey: "Apple Speech Analyzer is unavailable in this build."]
+        )
+    }
+
+    func modelsExistOnDisk() -> Bool { false }
+    func clearCache() async throws {}
+    func refreshModelsExistOnDiskAsync() async -> Bool { false }
+}
+#endif
 
 // MARK: - Buffer Converter (from Apple's sample)
 

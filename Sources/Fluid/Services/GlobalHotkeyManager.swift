@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-private nonisolated enum HotkeyHoldModeType: Hashable {
+private enum HotkeyHoldModeType: Hashable {
     case transcription
     case promptMode
     case commandMode
@@ -9,12 +9,12 @@ private nonisolated enum HotkeyHoldModeType: Hashable {
     case promptAssignment
 }
 
-private nonisolated enum ActivePrimaryShortcutPress: Equatable {
+private enum ActivePrimaryShortcutPress: Equatable {
     case keyboard(UInt16)
     case mouse(Int)
 }
 
-private final nonisolated class HotkeyState: @unchecked Sendable {
+private final class HotkeyState: @unchecked Sendable {
     private let lock = NSLock()
     var isKeyPressed = false
     var isPromptModeKeyPressed = false
@@ -446,21 +446,26 @@ final class GlobalHotkeyManager: NSObject {
             return false
         }
 
-        let eventMask = (1 << CGEventType.keyDown.rawValue)
-            | (1 << CGEventType.keyUp.rawValue)
-            | (1 << CGEventType.flagsChanged.rawValue)
-            | (1 << CGEventType.leftMouseDown.rawValue)
-            | (1 << CGEventType.leftMouseUp.rawValue)
-            | (1 << CGEventType.rightMouseDown.rawValue)
-            | (1 << CGEventType.rightMouseUp.rawValue)
-            | (1 << CGEventType.otherMouseDown.rawValue)
-            | (1 << CGEventType.otherMouseUp.rawValue)
+        let eventMaskTypes: [CGEventType] = [
+            .keyDown,
+            .keyUp,
+            .flagsChanged,
+            .leftMouseDown,
+            .leftMouseUp,
+            .rightMouseDown,
+            .rightMouseUp,
+            .otherMouseDown,
+            .otherMouseUp,
+        ]
+        let eventMask = eventMaskTypes.reduce(CGEventMask(0)) { mask, type in
+            mask | CGEventMask(1 << type.rawValue)
+        }
 
         self.eventTap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
-            eventsOfInterest: CGEventMask(eventMask),
+            eventsOfInterest: eventMask,
             callback: { proxy, type, event, refcon -> Unmanaged<CGEvent>? in
                 guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
                 let manager = Unmanaged<GlobalHotkeyManager>.fromOpaque(refcon)

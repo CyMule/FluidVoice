@@ -41,7 +41,7 @@ enum DictationAudioHistoryError: LocalizedError {
     }
 }
 
-final nonisolated class DictationAudioHistoryStore: @unchecked Sendable {
+final class DictationAudioHistoryStore: @unchecked Sendable {
     static let shared = DictationAudioHistoryStore()
 
     private let appSupportFolder = "FluidVoice"
