@@ -388,9 +388,21 @@ final class DictationE2ETests: XCTestCase {
 
             XCTAssertEqual(
                 ASRService.applySpokenPunctuationFormatting(
-                    "email at sign example dot com slash help underscore me"
+                    "email at the rate example dot com slash help underscore me"
                 ),
                 "email@example.com/help_me"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting(
+                    "email at sign example dot com",
+                    appName: "Codex",
+                    bundleID: "com.openai.codex"
+                ),
+                "email@example.com"
+            )
+            XCTAssertEqual(
+                ASRService.applySpokenPunctuationFormatting("email at sign example"),
+                "email at sign example"
             )
             XCTAssertEqual(
                 ASRService.applySpokenPunctuationFormatting("x hyphen ray costs 50 percent"),

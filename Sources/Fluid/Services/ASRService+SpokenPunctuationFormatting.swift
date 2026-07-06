@@ -1,13 +1,52 @@
 import Foundation
 
 extension ASRService {
-    static func applySpokenPunctuationFormatting(_ text: String) -> String {
+    static func applySpokenPunctuationFormatting(
+        _ text: String,
+        appName: String? = nil,
+        bundleID: String? = nil,
+        windowTitle: String? = nil
+    ) -> String {
         guard SettingsStore.shared.autoConvertPunctuationEnabled else { return text }
-        return SpokenPunctuationFormatter.apply(text)
+        return SpokenPunctuationFormatter.apply(
+            text,
+            appName: appName,
+            bundleID: bundleID,
+            windowTitle: windowTitle
+        )
     }
 }
 
 private enum SpokenPunctuationFormatter {
+    private struct FormattingContext {
+        let appName: String?
+        let bundleID: String?
+        let windowTitle: String?
+
+        var isAtSignPunctuationApp: Bool {
+            let haystack = [self.appName, self.bundleID, self.windowTitle]
+                .compactMap { $0?.lowercased() }
+                .joined(separator: " ")
+            return haystack.contains("codex") ||
+                haystack.contains("chatgpt") ||
+                haystack.contains("claude") ||
+                haystack.contains("cursor") ||
+                haystack.contains("windsurf") ||
+                haystack.contains("xcode") ||
+                haystack.contains("visual studio code") ||
+                haystack.contains("vscode") ||
+                haystack.contains("terminal") ||
+                haystack.contains("iterm") ||
+                haystack.contains("warp") ||
+                haystack.contains("ghostty") ||
+                haystack.contains("kitty") ||
+                haystack.contains("alacritty") ||
+                haystack.contains("slack") ||
+                haystack.contains("discord") ||
+                haystack.contains("teams")
+        }
+    }
+
     private enum Spacing {
         case rightAttached
         case leftAttached
@@ -22,6 +61,7 @@ private enum SpokenPunctuationFormatter {
         let symbol: String
         let spacing: Spacing
         var requiresSymbolContext = false
+        var requiresAtSignPunctuationApp = false
     }
 
     private enum Token {
@@ -64,9 +104,15 @@ private enum SpokenPunctuationFormatter {
         }
     }()
 
-    static func apply(_ text: String) -> String {
+    static func apply(
+        _ text: String,
+        appName: String? = nil,
+        bundleID: String? = nil,
+        windowTitle: String? = nil
+    ) -> String {
         guard !text.isEmpty else { return text }
 
+        let context = FormattingContext(appName: appName, bundleID: bundleID, windowTitle: windowTitle)
         let tokens = self.tokenize(text)
         guard tokens.contains(where: { $0.normalizedWord != nil }) else {
             return self.cleanSymbolCommaNoise(in: text)
@@ -75,7 +121,7 @@ private enum SpokenPunctuationFormatter {
         var output: [OutputPart] = []
         var index = 0
         while index < tokens.count {
-            if let match = self.matchRule(in: tokens, at: index) {
+            if let match = self.matchRule(in: tokens, at: index, context: context) {
                 output.append(.punctuation(symbol: match.rule.symbol, spacing: match.rule.spacing))
                 index = match.endIndex
             } else if let text = tokens[index].text {
@@ -228,7 +274,13 @@ private enum SpokenPunctuationFormatter {
             self.rules(
                 symbol: "@",
                 spacing: .noSpaceAround,
-                phrases: ["at sign", "at the rate", "commercial at"]
+                phrases: ["at the rate"]
+            ) +
+            self.rules(
+                symbol: "@",
+                spacing: .noSpaceAround,
+                phrases: ["at sign", "commercial at"],
+                requiresAtSignPunctuationApp: true
             ) +
             self.rules(
                 symbol: "&",
@@ -308,7 +360,8 @@ private enum SpokenPunctuationFormatter {
         symbol: String,
         spacing: Spacing,
         phrases: [String],
-        requiresSymbolContext: Bool = false
+        requiresSymbolContext: Bool = false,
+        requiresAtSignPunctuationApp: Bool = false
     ) -> [PhraseRule] {
         phrases.compactMap { phrase in
             let words = phrase
@@ -320,7 +373,8 @@ private enum SpokenPunctuationFormatter {
                 words: words,
                 symbol: symbol,
                 spacing: spacing,
-                requiresSymbolContext: requiresSymbolContext
+                requiresSymbolContext: requiresSymbolContext,
+                requiresAtSignPunctuationApp: requiresAtSignPunctuationApp
             )
         }
     }
@@ -357,7 +411,11 @@ private enum SpokenPunctuationFormatter {
         return tokens
     }
 
-    private static func matchRule(in tokens: [Token], at index: Int) -> (rule: PhraseRule, endIndex: Int)? {
+    private static func matchRule(
+        in tokens: [Token],
+        at index: Int,
+        context: FormattingContext
+    ) -> (rule: PhraseRule, endIndex: Int)? {
         guard let firstWord = tokens[index].normalizedWord,
               let candidates = self.rulesByFirstWord[firstWord]
         else {
@@ -385,7 +443,8 @@ private enum SpokenPunctuationFormatter {
             }
             if matched,
                !rule.requiresSymbolContext ||
-               self.hasSymbolContext(in: tokens, startIndex: index, endIndex: cursor)
+               self.hasSymbolContext(in: tokens, startIndex: index, endIndex: cursor),
+               !rule.requiresAtSignPunctuationApp || context.isAtSignPunctuationApp
             {
                 return (rule, cursor)
             }

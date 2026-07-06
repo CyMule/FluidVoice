@@ -2206,6 +2206,12 @@ struct ContentView: View {
         var aiFallbackReason: String?
         var postProcessingModel: String?
         let appInfo = self.recordingAppInfo ?? self.getCurrentAppInfo()
+        let normalizedTranscribedText = ASRService.applySpokenPunctuationFormatting(
+            transcribedText,
+            appName: appInfo.name,
+            bundleID: appInfo.bundleId,
+            windowTitle: appInfo.windowTitle
+        )
 
         let shouldUseAI = activeDictationSlot.map {
             DictationAIPostProcessingGate.isConfigured(for: $0, appBundleID: appInfo.bundleId)
@@ -2216,7 +2222,7 @@ struct ContentView: View {
             DebugLogger.shared.debug("Routing transcription through AI post-processing", source: "ContentView")
             let postProcessingModelInfo = self.currentDictationAIModelInfo()
             postProcessingModel = postProcessingModelInfo.model
-            let postProcessingInputChars = transcribedText.count
+            let postProcessingInputChars = normalizedTranscribedText.count
             let postProcessingStart = Date()
 
             // Update overlay text to show we're now refining (processing already true)
@@ -2229,7 +2235,7 @@ struct ContentView: View {
 
             do {
                 finalText = try await self.processTextWithAI(
-                    transcribedText,
+                    normalizedTranscribedText,
                     overrideSystemPrompt: promptOverride,
                     dictationSlot: activeDictationSlot
                 )
@@ -2252,7 +2258,7 @@ struct ContentView: View {
                 } else {
                     NotificationService.showAIProcessingFallback(error: error.localizedDescription)
                 }
-                finalText = transcribedText
+                finalText = normalizedTranscribedText
             }
             let postProcessingLatencyMs = Int((Date().timeIntervalSince(postProcessingStart) * 1000).rounded())
             AnalyticsService.shared.capture(
@@ -2272,7 +2278,7 @@ struct ContentView: View {
             NotchOverlayManager.shared.updateTranscriptionText("")
 
         } else {
-            finalText = transcribedText
+            finalText = normalizedTranscribedText
         }
 
         // Normalize literal command and mention syntax after AI cleanup and before final user preferences.
@@ -2786,11 +2792,16 @@ struct ContentView: View {
         NotchOverlayManager.shared.updateTranscriptionText("Reprocessing...")
         await Task.yield()
 
-        let normalizedTranscribedText = ASRService.applySpokenPunctuationFormatting(transcribedText)
-        var finalText = normalizedTranscribedText
         var aiFallbackReason: String?
         var postProcessingModel: String?
         let appInfo = self.getCurrentAppInfo()
+        let normalizedTranscribedText = ASRService.applySpokenPunctuationFormatting(
+            transcribedText,
+            appName: appInfo.name,
+            bundleID: appInfo.bundleId,
+            windowTitle: appInfo.windowTitle
+        )
+        var finalText = normalizedTranscribedText
         let shouldUseAI = DictationAIPostProcessingGate.isConfigured(for: .primary, appBundleID: appInfo.bundleId)
         if shouldUseAI {
             postProcessingModel = self.currentDictationAIModelInfo().model
