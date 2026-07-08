@@ -668,19 +668,18 @@ final class ASRService: ObservableObject {
         }
 
         let startedAt = Date().timeIntervalSince1970
-        if SettingsStore.shared.experimentalDirectAudioCaptureEnabled,
-           self.prepareDirectAudioInputIfPossible(reason: reason)
-        {
-            self.benchmarkLog("direct_audio_prewarm reason=\(reason) elapsedMs=\(self.elapsedMilliseconds(since: startedAt))")
+        guard SettingsStore.shared.experimentalDirectAudioCaptureEnabled else {
+            DebugLogger.shared.debug("Audio engine prewarm skipped - direct capture disabled", source: "ASRService")
             return
         }
 
-        do {
-            try self.configureSession()
-            self.benchmarkLog("audio_engine_prewarm reason=\(reason) elapsedMs=\(self.elapsedMilliseconds(since: startedAt))")
-        } catch {
-            self.retireAudioEngine(reason: "prewarm_failed")
-            DebugLogger.shared.warning("Audio engine prewarm failed: \(error.localizedDescription)", source: "ASRService")
+        if self.prepareDirectAudioInputIfPossible(reason: reason) {
+            self.benchmarkLog("direct_audio_prewarm reason=\(reason) elapsedMs=\(self.elapsedMilliseconds(since: startedAt))")
+        } else {
+            DebugLogger.shared.debug(
+                "Audio engine prewarm skipped - AVAudioEngine fallback is deferred until recording start",
+                source: "ASRService"
+            )
         }
     }
 
@@ -1724,16 +1723,26 @@ final class ASRService: ObservableObject {
         _ = engine.inputNode
         DebugLogger.shared.debug("Input node instantiated", source: "ASRService")
 
-        // Force output node instantiation for output device binding
-        DebugLogger.shared.debug("📍 Forcing output node instantiation...", source: "ASRService")
-        _ = engine.outputNode
-        DebugLogger.shared.debug("✅ Output node instantiated", source: "ASRService")
+        if self.needsOutputNodeBinding() {
+            // Force output node instantiation only when a specific output device must be bound.
+            DebugLogger.shared.debug("📍 Forcing output node instantiation...", source: "ASRService")
+            _ = engine.outputNode
+            DebugLogger.shared.debug("✅ Output node instantiated", source: "ASRService")
+        } else {
+            DebugLogger.shared.debug("⏭️ Skipping output node instantiation (capture-only)", source: "ASRService")
+        }
 
         // NOTE: Device binding occurs in startEngine() BEFORE engine.prepare()
         // Per CoreAudio docs, device must be set before AudioUnit initialization (prepare)
         // Since sync mode is always ON, binding actually no-ops and uses system defaults
 
         DebugLogger.shared.debug("✅ configureSession() - COMPLETED", source: "ASRService")
+    }
+
+    private func needsOutputNodeBinding() -> Bool {
+        guard SettingsStore.shared.syncAudioDevicesWithSystem == false else { return false }
+        guard let preferredUID = SettingsStore.shared.preferredOutputDeviceUID else { return false }
+        return preferredUID.isEmpty == false
     }
 
     /// In independent mode, attempt to bind AVAudioEngine's input to the user's preferred input device.
