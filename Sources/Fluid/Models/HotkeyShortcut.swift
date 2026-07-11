@@ -220,6 +220,10 @@ extension HotkeyShortcut {
         return (mouseButton == 0 || mouseButton == 1) && self.relevantModifierFlags.isEmpty
     }
 
+    var isUsableGlobalMouseShortcut: Bool {
+        self.isMouseShortcut && !self.isUnmodifiedLeftOrRightClick && self.mouseButton != nil
+    }
+
     var normalizedModifierKeyCodes: [UInt16] {
         guard !self.isMouseShortcut else { return [] }
         let normalized = Self.normalizedModifierKeyCodes(from: self.modifierKeyCodes)

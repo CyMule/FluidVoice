@@ -14,6 +14,58 @@ private enum ActivePrimaryShortcutPress: Equatable {
     case mouse(Int)
 }
 
+struct GlobalHotkeyEventScope {
+    private static let keyboardEventTypes: [CGEventType] = [.keyDown, .keyUp, .flagsChanged]
+
+    static func eventTypes(
+        primaryShortcuts: [HotkeyShortcut],
+        pasteShortcut: HotkeyShortcut?,
+        pasteShortcutEnabled: Bool
+    ) -> [CGEventType] {
+        var eventTypes = self.keyboardEventTypes
+        var mouseShortcuts = primaryShortcuts.filter(\.isUsableGlobalMouseShortcut)
+        if pasteShortcutEnabled, let pasteShortcut, pasteShortcut.isUsableGlobalMouseShortcut {
+            mouseShortcuts.append(pasteShortcut)
+        }
+
+        for shortcut in mouseShortcuts {
+            guard let button = shortcut.mouseButton else { continue }
+            let downType: CGEventType
+            let upType: CGEventType
+            switch button {
+            case 0:
+                downType = .leftMouseDown
+                upType = .leftMouseUp
+            case 1:
+                downType = .rightMouseDown
+                upType = .rightMouseUp
+            default:
+                downType = .otherMouseDown
+                upType = .otherMouseUp
+            }
+            if !eventTypes.contains(downType) { eventTypes.append(downType) }
+            if !eventTypes.contains(upType) { eventTypes.append(upType) }
+        }
+        return eventTypes
+    }
+}
+
+struct ConsumedMouseButtonTracker {
+    private var buttons: Set<Int> = []
+
+    mutating func recordMouseDown(button: Int) {
+        self.buttons.insert(button)
+    }
+
+    mutating func consumeMouseUp(button: Int) -> Bool {
+        self.buttons.remove(button) != nil
+    }
+
+    mutating func reset() {
+        self.buttons.removeAll()
+    }
+}
+
 private final class HotkeyState: @unchecked Sendable {
     private let lock = NSLock()
     var isKeyPressed = false
@@ -33,6 +85,7 @@ private final class HotkeyState: @unchecked Sendable {
     var automaticPressWasTargetActive: [HotkeyHoldModeType: Bool] = [:]
     var automaticPressStartedTypes: Set<HotkeyHoldModeType> = []
     var activePrimaryShortcutPress: ActivePrimaryShortcutPress?
+    var consumedMouseButtons = ConsumedMouseButtonTracker()
 
     func withLock<T>(_ block: () -> T) -> T {
         self.lock.lock()
@@ -264,6 +317,8 @@ final class GlobalHotkeyManager: NSObject {
     private var isInitialized = false
     private var initializationTask: Task<Void, Never>?
     private var healthCheckTask: Task<Void, Never>?
+    private var eventTapRecoveryTask: Task<Void, Never>?
+    private var recentEventTapTimeouts: [Date] = []
     private var maxRetryAttempts = 5
     private var retryDelay: TimeInterval = 0.5
     private var healthCheckInterval: TimeInterval = 30.0
@@ -338,8 +393,10 @@ final class GlobalHotkeyManager: NSObject {
     }
 
     func updatePrimaryShortcuts(_ newShortcuts: [HotkeyShortcut]) {
+        let previousEventTypes = self.currentEventTapTypes()
         self.primaryShortcuts = newShortcuts
         DebugLogger.shared.info("Updated transcription hotkeys", source: "GlobalHotkeyManager")
+        self.refreshEventTapScopeIfNeeded(previousEventTypes: previousEventTypes)
     }
 
     func updateCommandModeShortcut(_ newShortcut: HotkeyShortcut?) {
@@ -411,6 +468,11 @@ final class GlobalHotkeyManager: NSObject {
         self.pasteLastTranscriptionCallback = callback
     }
 
+    func refreshEventTapScope() {
+        let previousEventTypes = self.activeEventTapTypes
+        self.refreshEventTapScopeIfNeeded(previousEventTypes: previousEventTypes)
+    }
+
     private func setupGlobalHotkeyWithRetry() {
         for attempt in 1...self.maxRetryAttempts {
             DebugLogger.shared.debug("Setup attempt \(attempt)/\(self.maxRetryAttempts)", source: "GlobalHotkeyManager")
@@ -446,17 +508,8 @@ final class GlobalHotkeyManager: NSObject {
             return false
         }
 
-        let eventMaskTypes: [CGEventType] = [
-            .keyDown,
-            .keyUp,
-            .flagsChanged,
-            .leftMouseDown,
-            .leftMouseUp,
-            .rightMouseDown,
-            .rightMouseUp,
-            .otherMouseDown,
-            .otherMouseUp,
-        ]
+        let eventMaskTypes = self.currentEventTapTypes()
+        self.activeEventTapTypes = eventMaskTypes
         let eventMask = eventMaskTypes.reduce(CGEventMask(0)) { mask, type in
             mask | CGEventMask(1 << type.rawValue)
         }
@@ -495,8 +548,39 @@ final class GlobalHotkeyManager: NSObject {
             return false
         }
 
-        DebugLogger.shared.info("Event tap successfully created and enabled", source: "GlobalHotkeyManager")
+        let eventNames = eventMaskTypes.map { String(describing: $0) }.joined(separator: ",")
+        DebugLogger.shared.info(
+            "Event tap successfully created and enabled [events=\(eventNames)]",
+            source: "GlobalHotkeyManager"
+        )
         return true
+    }
+
+    private var activeEventTapTypes: [CGEventType] = []
+
+    private func currentEventTapTypes() -> [CGEventType] {
+        GlobalHotkeyEventScope.eventTypes(
+            primaryShortcuts: self.primaryShortcuts,
+            pasteShortcut: SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut,
+            pasteShortcutEnabled: SettingsStore.shared.pasteLastTranscriptionShortcutEnabled
+        )
+    }
+
+    private func refreshEventTapScopeIfNeeded(previousEventTypes: [CGEventType]) {
+        let newEventTypes = self.currentEventTapTypes()
+        guard previousEventTypes.map(\.rawValue) != newEventTypes.map(\.rawValue) else { return }
+        guard self.isInitialized else {
+            self.activeEventTapTypes = newEventTypes
+            return
+        }
+
+        DebugLogger.shared.info("Event tap input scope changed; rebuilding tap", source: "GlobalHotkeyManager")
+        if self.setupGlobalHotkey() {
+            self.isInitialized = true
+        } else {
+            self.isInitialized = false
+            self.scheduleEventTapRecovery(after: 5, reason: "scope rebuild failed")
+        }
     }
 
     private nonisolated func cleanupEventTap() {
@@ -522,6 +606,7 @@ final class GlobalHotkeyManager: NSObject {
             self.state.automaticPressStartTimes.removeValue(forKey: .transcription)
             self.state.automaticPressWasTargetActive.removeValue(forKey: .transcription)
             self.state.automaticPressStartedTypes.remove(.transcription)
+            self.state.consumedMouseButtons.reset()
             _ = self.state.pendingReleaseStopTokens.removeValue(forKey: .transcription)
             return self.state.pendingReleaseStopTasks.removeValue(forKey: .transcription)
         }
@@ -1001,19 +1086,43 @@ final class GlobalHotkeyManager: NSObject {
         }
 
         let reason = (type == .tapDisabledByTimeout) ? "timeout" : "user input"
-        DebugLogger.shared.warning("Event tap disabled by \(reason) — attempting immediate re-enable", source: "GlobalHotkeyManager")
         self.resetModifierOnlyShortcutTracking(reason: .tapDisabled)
+        self.isInitialized = false
 
-        if let tap = self.eventTap {
-            CGEvent.tapEnable(tap: tap, enable: true)
+        // Core Graphics disables a slow tap to protect system input. Never defeat
+        // that fail-open behavior by immediately re-enabling from the callback.
+        let now = Date()
+        self.recentEventTapTimeouts.removeAll { now.timeIntervalSince($0) > 60 }
+        if type == .tapDisabledByTimeout {
+            self.recentEventTapTimeouts.append(now)
         }
-
-        if !self.isEventTapEnabled() {
-            DebugLogger.shared.warning("Event tap re-enable failed — recreating tap", source: "GlobalHotkeyManager")
-            self.setupGlobalHotkeyWithRetry()
-        }
+        let timeoutCount = self.recentEventTapTimeouts.count
+        let recoveryDelay: TimeInterval = timeoutCount >= 3 ? 60 : 5
+        DebugLogger.shared.warning(
+            "Event tap disabled by \(reason); remaining fail-open for \(Int(recoveryDelay))s " +
+                "[recentTimeouts=\(timeoutCount), events=\(self.activeEventTapTypes.map { $0.rawValue })]",
+            source: "GlobalHotkeyManager"
+        )
+        self.scheduleEventTapRecovery(after: recoveryDelay, reason: reason)
 
         return Unmanaged.passUnretained(event)
+    }
+
+    private func scheduleEventTapRecovery(after delay: TimeInterval, reason: String) {
+        self.eventTapRecoveryTask?.cancel()
+        self.eventTapRecoveryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            self.eventTapRecoveryTask = nil
+
+            if self.setupGlobalHotkey() {
+                self.isInitialized = true
+                DebugLogger.shared.info("Event tap recovered after cooldown [reason=\(reason)]", source: "GlobalHotkeyManager")
+            } else {
+                self.isInitialized = false
+                DebugLogger.shared.error("Event tap recovery failed after cooldown [reason=\(reason)]", source: "GlobalHotkeyManager")
+            }
+        }
     }
 
     private func synchronizedPressedModifierKeyCodes(
@@ -1650,12 +1759,14 @@ final class GlobalHotkeyManager: NSObject {
            let pasteShortcut = SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut,
            pasteShortcut.matchesMouse(button: mouseButton, modifiers: eventModifiers)
         {
+            self.state.withLock { self.state.consumedMouseButtons.recordMouseDown(button: mouseButton) }
             self.triggerPasteLastTranscription(isAutorepeat: false)
             return true
         }
 
         if self.primaryShortcuts.contains(where: { $0.matchesMouse(button: mouseButton, modifiers: eventModifiers) }) {
             guard self.beginPrimaryShortcutPress(.mouse(mouseButton)) else { return true }
+            self.state.withLock { self.state.consumedMouseButtons.recordMouseDown(button: mouseButton) }
             self.handlePrimaryDictationTriggerDown()
             return true
         }
@@ -1667,17 +1778,14 @@ final class GlobalHotkeyManager: NSObject {
     /// so the focused app never sees an orphaned mouse-up; otherwise ends a primary dictation press.
     private func handleMouseShortcutUp(_ event: CGEvent) -> Bool {
         let mouseButton = self.mouseButton(from: event)
-
-        if SettingsStore.shared.pasteLastTranscriptionShortcutEnabled,
-           let pasteShortcut = SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut,
-           pasteShortcut.isMouseShortcut,
-           pasteShortcut.mouseButton == mouseButton
-        {
-            return true
+        let wasConsumed = self.state.withLock {
+            self.state.consumedMouseButtons.consumeMouseUp(button: mouseButton)
         }
+        guard wasConsumed else { return false }
 
-        guard self.finishPrimaryShortcutPress(.mouse(mouseButton)) else { return false }
-        self.handlePrimaryDictationTriggerUp()
+        if self.finishPrimaryShortcutPress(.mouse(mouseButton)) {
+            self.handlePrimaryDictationTriggerUp()
+        }
         return true
     }
 
@@ -1866,6 +1974,9 @@ final class GlobalHotkeyManager: NSObject {
 
         self.initializationTask?.cancel()
         self.healthCheckTask?.cancel()
+        self.eventTapRecoveryTask?.cancel()
+        self.eventTapRecoveryTask = nil
+        self.recentEventTapTimeouts.removeAll()
         self.resetModifierOnlyShortcutTracking(reason: .reinitialize)
         self.isInitialized = false
         self.initializeWithDelay()
@@ -1880,6 +1991,7 @@ final class GlobalHotkeyManager: NSObject {
                 guard !Task.isCancelled else { break }
 
                 await MainActor.run {
+                    guard self.eventTapRecoveryTask == nil else { return }
                     if !self.validateEventTapHealth() {
                         DebugLogger.shared.warning("Health check failed, attempting to recover", source: "GlobalHotkeyManager")
 
@@ -1899,6 +2011,7 @@ final class GlobalHotkeyManager: NSObject {
     deinit {
         initializationTask?.cancel()
         healthCheckTask?.cancel()
+        eventTapRecoveryTask?.cancel()
         cleanupEventTap()
     }
 }

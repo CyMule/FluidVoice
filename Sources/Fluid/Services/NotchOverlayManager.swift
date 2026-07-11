@@ -282,6 +282,10 @@ final class NotchOverlayManager {
             } else {
                 await newNotch.expand(on: targetScreen)
             }
+            // DynamicNotchKit uses a transparent half-screen panel. Recording
+            // overlays are informational; never let that invisible surface
+            // intercept clicks intended for the app underneath.
+            newNotch.windowController?.window?.ignoresMouseEvents = true
             Self.overlayBench("notch_animation_complete presentation=\(presentation) elapsedMs=\(Self.elapsedMs(since: startedAt))")
             // Only update state if we're still the active generation
             guard let self = self, self.generation == currentGeneration else {

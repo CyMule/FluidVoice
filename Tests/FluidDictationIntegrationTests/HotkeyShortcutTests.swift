@@ -58,6 +58,83 @@ final class HotkeyShortcutTests: XCTestCase {
         XCTAssertFalse(rightClick.matchesMouse(button: 1, modifiers: NSEvent.ModifierFlags()))
         XCTAssertTrue(sideButton.matchesMouse(button: 3, modifiers: NSEvent.ModifierFlags()))
         XCTAssertTrue(modifiedLeftClick.matchesMouse(button: 0, modifiers: [.control]))
+        XCTAssertFalse(leftClick.isUsableGlobalMouseShortcut)
+        XCTAssertFalse(rightClick.isUsableGlobalMouseShortcut)
+        XCTAssertTrue(sideButton.isUsableGlobalMouseShortcut)
+        XCTAssertTrue(modifiedLeftClick.isUsableGlobalMouseShortcut)
+    }
+
+    func testKeyboardOnlyShortcutsDoNotSubscribeToMouseEvents() {
+        let keyboardShortcut = HotkeyShortcut(keyCode: 63, modifierFlags: [])
+
+        let eventTypes = GlobalHotkeyEventScope.eventTypes(
+            primaryShortcuts: [keyboardShortcut],
+            pasteShortcut: nil,
+            pasteShortcutEnabled: false
+        )
+
+        XCTAssertEqual(eventTypes.map(\.rawValue), [
+            CGEventType.keyDown.rawValue,
+            CGEventType.keyUp.rawValue,
+            CGEventType.flagsChanged.rawValue,
+        ])
+    }
+
+    func testMouseEventScopeIncludesOnlyConfiguredButtonClass() {
+        let sideButton = HotkeyShortcut(mouseButton: 3, modifierFlags: [])
+        let modifiedLeftClick = HotkeyShortcut(mouseButton: 0, modifierFlags: [.control])
+
+        let sideButtonTypes = GlobalHotkeyEventScope.eventTypes(
+            primaryShortcuts: [sideButton],
+            pasteShortcut: nil,
+            pasteShortcutEnabled: false
+        )
+        XCTAssertTrue(sideButtonTypes.contains(.otherMouseDown))
+        XCTAssertTrue(sideButtonTypes.contains(.otherMouseUp))
+        XCTAssertFalse(sideButtonTypes.contains(.leftMouseDown))
+        XCTAssertFalse(sideButtonTypes.contains(.rightMouseDown))
+
+        let leftClickTypes = GlobalHotkeyEventScope.eventTypes(
+            primaryShortcuts: [],
+            pasteShortcut: modifiedLeftClick,
+            pasteShortcutEnabled: true
+        )
+        XCTAssertTrue(leftClickTypes.contains(.leftMouseDown))
+        XCTAssertTrue(leftClickTypes.contains(.leftMouseUp))
+        XCTAssertFalse(leftClickTypes.contains(.otherMouseDown))
+    }
+
+    func testDisabledOrUnsafeMouseShortcutDoesNotExpandEventScope() {
+        let unmodifiedLeftClick = HotkeyShortcut(mouseButton: 0, modifierFlags: [])
+        let modifiedLeftClick = HotkeyShortcut(mouseButton: 0, modifierFlags: [.control])
+
+        let unsafeTypes = GlobalHotkeyEventScope.eventTypes(
+            primaryShortcuts: [unmodifiedLeftClick],
+            pasteShortcut: nil,
+            pasteShortcutEnabled: false
+        )
+        XCTAssertFalse(unsafeTypes.contains(.leftMouseDown))
+
+        let disabledTypes = GlobalHotkeyEventScope.eventTypes(
+            primaryShortcuts: [],
+            pasteShortcut: modifiedLeftClick,
+            pasteShortcutEnabled: false
+        )
+        XCTAssertFalse(disabledTypes.contains(.leftMouseDown))
+    }
+
+    func testMouseUpIsConsumedOnlyAfterMatchingConsumedMouseDown() {
+        var tracker = ConsumedMouseButtonTracker()
+
+        XCTAssertFalse(tracker.consumeMouseUp(button: 0))
+        tracker.recordMouseDown(button: 3)
+        XCTAssertFalse(tracker.consumeMouseUp(button: 0))
+        XCTAssertTrue(tracker.consumeMouseUp(button: 3))
+        XCTAssertFalse(tracker.consumeMouseUp(button: 3))
+
+        tracker.recordMouseDown(button: 1)
+        tracker.reset()
+        XCTAssertFalse(tracker.consumeMouseUp(button: 1))
     }
 
     func testMouseShortcutDisplayIncludesModifiers() {
