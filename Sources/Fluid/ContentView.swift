@@ -251,6 +251,7 @@ struct ContentView: View {
     @State private var accessibilityGuideMonitorTask: Task<Void, Never>?
     @State private var accessibilityGuideRequestID: UUID?
     @State private var prewarmDictationTask: Task<Void, Never>?
+    @State private var pendingDictationStartID: UUID?
     @State private var overlayLifecycleID: UInt64 = 0
 
     private var isRecordingAnyShortcutCapture: Bool {
@@ -469,8 +470,8 @@ struct ContentView: View {
                 self.handleRewriteShortcutEnabledChange(newValue)
             }
             .onChange(of: self.pasteLastTranscriptionHotkeyShortcut) { _, newValue in
-                // The hotkey manager reads this value live from SettingsStore, so persisting is enough.
                 SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut = newValue
+                self.hotkeyManager?.refreshEventTapScope()
             }
             .onChange(of: self.isPasteLastTranscriptionShortcutEnabled) { newValue in
                 self.handlePasteLastTranscriptionShortcutEnabledChange(newValue)
@@ -479,6 +480,7 @@ struct ContentView: View {
 
     private func handlePasteLastTranscriptionShortcutEnabledChange(_ isEnabled: Bool) {
         SettingsStore.shared.pasteLastTranscriptionShortcutEnabled = isEnabled
+        self.hotkeyManager?.refreshEventTapScope()
         if !isEnabled, self.activeShortcutRecordingTarget == .pasteLast {
             self.clearShortcutRecordingMode()
         }
@@ -3467,6 +3469,10 @@ struct ContentView: View {
     private func handleCancelShortcut() -> Bool {
         var handled = false
 
+        if self.cancelPendingDictationStartIfNeeded() {
+            handled = true
+        }
+
         if NotchOverlayManager.shared.isCommandOutputExpanded {
             DebugLogger.shared.debug("Cancel shortcut: closing expanded command notch", source: "ContentView")
             NotchOverlayManager.shared.hideExpandedCommandOutput()
@@ -3677,6 +3683,13 @@ extension ContentView {
 
     private func beginDictationRecording(for slot: SettingsStore.DictationShortcutSlot, mode: ActiveRecordingMode) {
         DebugLogger.shared.debug("Begin dictation recording for slot \(slot.rawValue)", source: "ContentView")
+
+        // A second toggle while the model is loading cancels only the pending
+        // recording. The shared startup preload keeps running for the next use.
+        if self.cancelPendingDictationStartIfNeeded() {
+            return
+        }
+
         self.appBench("begin_recording slot=\(slot.rawValue) mode=\(mode.rawValue)")
         if self.isOnboardingVoicePlaygroundStepActive {
             self.asr.finalText = ""
@@ -3694,8 +3707,35 @@ extension ContentView {
             return
         }
         self.advanceOverlayLifecycle()
+        let startID = UUID()
+        self.pendingDictationStartID = startID
         Task {
             let asrStartStartedAt = ProcessInfo.processInfo.systemUptime
+            if !self.asr.isAsrReady {
+                DebugLogger.shared.info("Waiting for voice model before starting capture", source: "ContentView")
+                self.menuBarManager.setOverlayMode(.dictation)
+                self.menuBarManager.showRecordingOverlayImmediately()
+                do {
+                    try await self.asr.ensureAsrReady()
+                } catch {
+                    guard self.pendingDictationStartID == startID else { return }
+                    self.pendingDictationStartID = nil
+                    self.clearActiveRecordingMode()
+                    self.menuBarManager.hideRecordingOverlayImmediately(reason: "model_load_failed")
+                    DebugLogger.shared.error(
+                        "Unable to prepare voice model for dictation: \(error.localizedDescription)",
+                        source: "ContentView"
+                    )
+                    return
+                }
+            }
+
+            guard self.pendingDictationStartID == startID else {
+                DebugLogger.shared.info("Pending dictation start was cancelled while model loaded", source: "ContentView")
+                return
+            }
+
+            self.pendingDictationStartID = nil
             DebugLogger.shared.benchmark("APP_BENCH", message: "asr_start_call", source: "AppBenchmark")
             if SettingsStore.shared.enableTranscriptionSounds, !self.asr.isRunning {
                 TranscriptionSoundPlayer.shared.playStartSound()
@@ -3718,6 +3758,20 @@ extension ContentView {
                 source: "AppBenchmark"
             )
         }
+    }
+
+    @discardableResult
+    private func cancelPendingDictationStartIfNeeded() -> Bool {
+        guard self.pendingDictationStartID != nil else { return false }
+
+        self.pendingDictationStartID = nil
+        self.clearActiveRecordingMode()
+        self.menuBarManager.hideRecordingOverlayImmediately(reason: "pending_model_load_cancelled")
+        DebugLogger.shared.info(
+            "Cancelled pending dictation start; startup model preload will continue",
+            source: "ContentView"
+        )
+        return true
     }
 
     private func beginDictationRecording(for selection: SettingsStore.DictationPromptSelection, mode: ActiveRecordingMode) {

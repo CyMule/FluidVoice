@@ -2841,15 +2841,11 @@ final class ASRService: ObservableObject {
             DebugLogger.shared.info("✓ Provider preparation completed in \(String(format: "%.1f", downloadDuration)) seconds", source: "ASRService")
 
             self.isDownloadingModel = false
-            // Keep isLoadingModel true until first transcription completes (for large models that need warm-up)
-            if !self.hasCompletedFirstTranscription {
-                self.isLoadingModel = true
-                self.modelPreparationPhase = .loading
-                DebugLogger.shared.info("⏳ Model loaded, waiting for first transcription to complete...", source: "ASRService")
-            } else {
-                self.isLoadingModel = false
-                self.modelPreparationPhase = nil
-            }
+            // First-inference warm-up is separate from model loading. Keeping
+            // this flag set after prepare() returns makes ready providers look
+            // busy and leaves the overlay stuck on "Loading model".
+            self.isLoadingModel = false
+            self.modelPreparationPhase = nil
             self.downloadProgress = nil
             self.modelsExistOnDisk = true
 
