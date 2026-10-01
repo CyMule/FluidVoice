@@ -1153,6 +1153,20 @@ final class HotkeyShortcutTests: XCTestCase {
         }
     }
 
+    func testSavedCommandShortcutRemainsReservedWhileDisabled() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)
+        let start = try XCTUnwrap(source.range(of: "private func shortcutConflictMessage("))
+        let end = try XCTUnwrap(source.range(of: "private func applyPrimaryDictationShortcut", range: start.upperBound..<source.endIndex))
+        let conflicts = String(source[start.lowerBound..<end.lowerBound])
+        let optional = try XCTUnwrap(conflicts.components(separatedBy: "let optionalConfiguredShortcuts:").last?.components(separatedBy: "for (otherTarget").first)
+        XCTAssertTrue(optional.contains("(.command, self.commandModeHotkeyShortcut)"), "The saved binding must remain reserved when Command Mode is toggled off")
+        XCTAssertFalse(conflicts.contains("if self.isCommandModeShortcutEnabled"))
+        XCTAssertTrue(conflicts.contains("configuredShortcut == shortcut"))
+        XCTAssertTrue(conflicts.contains("shortcut.conflictsWith(configuredShortcut)"))
+        XCTAssertTrue(conflicts.contains("otherTarget != target"), "Editing the Command binding must not conflict with itself")
+    }
+
     func testBareKeyPolicyCoversLettersNumbersAndEditingKeysButAllowsPunctuation() {
         let letters: [UInt16] = [0, 11, 8, 2, 14, 3, 5, 4, 34, 38, 40, 37, 46, 45, 31, 35, 12, 15, 1, 17, 32, 9, 13, 7, 16, 6]
         let digits: [UInt16] = [29, 18, 19, 20, 21, 23, 22, 26, 28, 25, 82, 83, 84, 85, 86, 87, 88, 89, 91, 92]
