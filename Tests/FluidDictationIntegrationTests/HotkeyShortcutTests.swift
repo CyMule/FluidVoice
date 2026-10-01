@@ -410,7 +410,11 @@ final class HotkeyShortcutTests: XCTestCase {
 
         NotchContentState.shared.updateTranscription(String(repeating: "multiline preview text ", count: 30))
         controller.refreshSizeForContent()
-        try await Task.sleep(nanoseconds: 120_000_000)
+        // SwiftUI layout can finish after 120 ms on a busy host; await the actual resize.
+        let resizeDeadline = Date().addingTimeInterval(2)
+        while let size = controller.windowSizeForTests, size.height <= emptySize.height, Date() < resizeDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         let expandedSize = try XCTUnwrap(controller.windowSizeForTests)
         XCTAssertGreaterThan(expandedSize.height, emptySize.height)
 

@@ -1370,22 +1370,28 @@ struct ContentView: View {
             .padding(.top, self.theme.metrics.spacing.sm)
             .padding(.bottom, self.theme.metrics.spacing.sm)
 
-            if self.isAppSearchActive {
-                AppSearchResultsView(
-                    service: self.appSearch,
-                    cursor: self.$appSearchCursor,
-                    expanded: self.$appSearchExpanded,
-                    open: self.open(searchHit:)
-                )
-            } else {
-                self.appSidebarSections
+            Group {
+                if self.isAppSearchActive {
+                    AppSearchResultsView(
+                        service: self.appSearch,
+                        cursor: self.$appSearchCursor,
+                        expanded: self.$appSearchExpanded,
+                        open: self.open(searchHit:)
+                    )
+                } else {
+                    self.appSidebarSections
+                }
             }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+            .frame(maxHeight: .infinity)
+            .clipped()
+
+            // Reserve real layout space for the footer. A safe-area inset can let
+            // the native sidebar list draw its last rows beneath these controls.
             VStack(spacing: 0) {
                 self.helpEntryButton
                 self.settingsEntryButton
             }
+            .fixedSize(horizontal: false, vertical: true)
         }
         .onChange(of: self.appSearch.groups) {
             self.appSearchCursor = nil
