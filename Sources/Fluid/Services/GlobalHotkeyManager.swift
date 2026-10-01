@@ -262,6 +262,12 @@ private final nonisolated class HotkeyState: @unchecked Sendable {
 
 @MainActor
 final class GlobalHotkeyManager: NSObject {
+    enum CancelHandlingResult {
+        case unhandled
+        case dismissedOverlay
+        case cancelled
+    }
+
     private nonisolated(unsafe) var state = HotkeyState()
     private nonisolated(unsafe) var eventTap: CFMachPort?
     private nonisolated(unsafe) var runLoopSource: CFRunLoopSource?
@@ -300,7 +306,7 @@ final class GlobalHotkeyManager: NSObject {
     private var isRewriteRecordingProvider: (() -> Bool)?
     private var isShortcutCaptureActiveProvider: (() -> Bool)?
     private var shortcutCaptureHandler: ((NSEvent) -> NSEvent?)?
-    private var cancelCallback: (() -> Bool)? // Returns true if handled
+    private var cancelCallback: (() -> CancelHandlingResult)?
     private var pasteLastTranscriptionCallback: (() -> Void)?
     private var hotkeyMode: HotkeyActivationMode = SettingsStore.shared.hotkeyMode
     private let automaticTapThresholdSeconds: TimeInterval = 0.4
@@ -678,7 +684,7 @@ final class GlobalHotkeyManager: NSObject {
         self.scheduleActiveShortcutLog(reason: "shortcuts updated")
     }
 
-    func setCancelCallback(_ callback: @escaping () -> Bool) {
+    func setCancelCallback(_ callback: @escaping () -> CancelHandlingResult) {
         self.cancelCallback = callback
     }
 
@@ -1270,20 +1276,26 @@ final class GlobalHotkeyManager: NSObject {
                !isAutorepeat,
                self.activePrimaryShortcutPress?.keyboardKeyCode == keyCode
             { self.activePrimaryShortcutPress = nil }
-            self.markOtherInputDuringModifierOnly()
-
             // The application owns cancellation output; fallback managers only discard capture.
             if SettingsStore.shared.cancelRecordingHotkeyShortcut?.matches(keyCode: keyCode, modifiers: eventModifiers) == true {
-                var handled = self.cancelCallback?() ?? false
+                let result = self.cancelCallback?() ?? .unhandled
+                // Closing a suggestion must preserve the held shortcut and capture.
+                if result == .dismissedOverlay { return nil }
+                var handled = result == .cancelled
                 if !handled, self.asrService.isRunningOrStarting {
                     Task { @MainActor in await self.asrService.stopWithoutTranscription() }
                     handled = true
                 }
-                if handled || self.pendingRecordingActionCounts.values.contains(where: { $0 > 0 }) {
+                let hasPendingPress = self.state.withLock {
+                    self.state.activePrimaryShortcutPress != nil || self.state.activeModifierOnlyType != nil
+                }
+                if handled || hasPendingPress || self.pendingRecordingActionCounts.values.contains(where: { $0 > 0 }) {
                     self.resetModifierOnlyShortcutTracking(reason: .cancel)
                     return nil
                 }
             }
+
+            self.markOtherInputDuringModifierOnly()
 
             // Check the "paste last transcription" shortcut (a one-shot action, like cancel).
             if SettingsStore.shared.pasteLastTranscriptionShortcutEnabled,

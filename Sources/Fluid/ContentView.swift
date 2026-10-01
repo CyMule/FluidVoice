@@ -4989,9 +4989,9 @@ struct ContentView: View {
         self.hotkeyManager?.setHotkeyMode(self.hotkeyMode)
 
         // Set cancel callback for Escape key handling (closes transient UI, resets recording state)
-        // Returns true if it handled something (so GlobalHotkeyManager knows to consume the event)
+        // Distinguishes suggestion dismissal from recording cancellation.
         self.hotkeyManager?.setCancelCallback {
-            self.handleCancelShortcut()
+            self.handleCancelShortcutResult()
         }
 
         // Re-insert the most recent transcription on demand (no clipboard involved).
@@ -5025,12 +5025,16 @@ struct ContentView: View {
 
     @discardableResult
     private func handleCancelShortcut() -> Bool {
-        if self.isSavingCancelledRecording { return true }
+        self.handleCancelShortcutResult() != .unhandled
+    }
+
+    private func handleCancelShortcutResult() -> GlobalHotkeyManager.CancelHandlingResult {
+        if self.isSavingCancelledRecording { return .cancelled }
         var handled = false
 
         if DictionaryCorrectionOverlayController.shared.isPresented {
             DictionaryCorrectionOverlayController.shared.dismiss()
-            handled = true
+            return .dismissedOverlay
         }
         if NotchOverlayManager.shared.isCommandOutputExpanded {
             NotchOverlayManager.shared.hideExpandedCommandOutput()
@@ -5091,7 +5095,7 @@ struct ContentView: View {
             self.spokenSendCountdownStartedAt = nil
             self.hotkeyManager?.resetModifierOnlyShortcutTracking(reason: .cancel)
         }
-        return handled
+        return handled ? .cancelled : .unhandled
     }
 
     // MARK: - Model Management Helpers

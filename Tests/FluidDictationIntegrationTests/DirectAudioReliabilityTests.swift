@@ -957,10 +957,12 @@ final class DirectAudioReliabilityTests: XCTestCase {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)
         let callback = try XCTUnwrap(source.components(separatedBy: "self.hotkeyManager?.setCancelCallback {").last?.components(separatedBy: "// Re-insert").first)
-        XCTAssertTrue(callback.contains("self.handleCancelShortcut()"))
+        XCTAssertTrue(callback.contains("self.handleCancelShortcutResult()"))
         XCTAssertFalse(callback.contains("clearActiveRecordingMode()"), "Keep the selected style until the History pipeline snapshots it")
-        let cancel = try XCTUnwrap(source.components(separatedBy: "private func handleCancelShortcut() -> Bool {").last?.components(separatedBy: "// MARK: - Model Management Helpers").first)
-        XCTAssertTrue(cancel.contains("if self.isSavingCancelledRecording { return true }"))
+        let cancel = try XCTUnwrap(source.components(separatedBy: "private func handleCancelShortcutResult() -> GlobalHotkeyManager.CancelHandlingResult {").last?
+            .components(separatedBy: "// MARK: - Model Management Helpers").first)
+        XCTAssertTrue(cancel.contains("if self.isSavingCancelledRecording { return .cancelled }"))
+        XCTAssertTrue(cancel.contains("DictionaryCorrectionOverlayController.shared.dismiss()\n            return .dismissedOverlay"))
         XCTAssertTrue(cancel.contains("self.settings.saveTranscriptionHistory"))
         XCTAssertTrue(cancel.contains("!self.asr.isDictionaryTrainingCaptureActive"))
         XCTAssertTrue(cancel.contains("!= .onboardingSandbox"))
@@ -977,7 +979,8 @@ final class DirectAudioReliabilityTests: XCTestCase {
     func testCancelledProcessingCannotPublishDelayedOverlayOrPracticeResult() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)
-        let status = try XCTUnwrap(source.components(separatedBy: "let onFinalTranscriptionStarted: @MainActor () -> Void = {").last?.components(separatedBy: "return (false, onFinalTranscriptionStarted)").first)
+        let status = try XCTUnwrap(source.components(separatedBy: "let onFinalTranscriptionStarted: @MainActor () -> Void = {").last?
+            .components(separatedBy: "return (false, onFinalTranscriptionStarted)").first)
         XCTAssertTrue(status.contains("self.cancelledOutputLifecycleID != lifecycleID"))
         let prompt = try XCTUnwrap(source.components(separatedBy: "private func processDictationPromptTest(").last?.components(separatedBy: "private func routePromptTestResult(").first)
         XCTAssertTrue(prompt.contains("guard promptTest.acceptsResult(for: sessionID), self.cancelledOutputLifecycleID != lifecycleID"))

@@ -407,7 +407,7 @@ final class HotkeyShortcutTests: XCTestCase {
         settings.cancelRecordingHotkeyShortcut = HotkeyShortcut(keyCode: 53, modifierFlags: [])
         var starts = 0
         let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: { starts += 1 })
-        manager.setCancelCallback { true }
+        manager.setCancelCallback { .cancelled }
         _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
         _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown, keyCode: 53, modifiers: []))
         _ = try manager.handleKeyEvent(type: .keyUp, event: self.primaryReleaseTestEvent(type: .keyUp))
@@ -1531,7 +1531,7 @@ final class HotkeyShortcutTests: XCTestCase {
     func testCancelAfterToggleReleaseInvalidatesQueuedStart() async throws {
         var starts = 0
         let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: { starts += 1 })
-        manager.setCancelCallback { true }
+        manager.setCancelCallback { .cancelled }
         _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
         _ = try manager.handleKeyEvent(type: .keyUp, event: self.primaryReleaseTestEvent(type: .keyUp))
         _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown, keyCode: 53, modifiers: []))
@@ -1874,7 +1874,7 @@ final class HotkeyShortcutTests: XCTestCase {
         defer { asr.isRunning = false }
         var cancellations = 0
         let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: {})
-        manager.setCancelCallback { cancellations += 1; return true }
+        manager.setCancelCallback { cancellations += 1; return .cancelled }
         let result = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown, keyCode: 53, modifiers: []))
         XCTAssertNil(result)
         for _ in 0..<20 {
@@ -1892,7 +1892,7 @@ final class HotkeyShortcutTests: XCTestCase {
         var stops = 0
         let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: { starts += 1; asr.isRunning = true }, onStop: { stops += 1; asr.isRunning = false })
         manager.setHotkeyMode(.hold)
-        manager.setCancelCallback { true }
+        manager.setCancelCallback { .cancelled }
         _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
         for _ in 0..<20 {
             await Task.yield()
@@ -1927,7 +1927,7 @@ final class HotkeyShortcutTests: XCTestCase {
         let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: {})
         manager.setCancelCallback {
             if !recoveryQueued { recoveryQueued = true; saves += 1 }
-            return true
+            return .cancelled
         }
         for _ in 0..<5 {
             XCTAssertNil(try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown, keyCode: 53, modifiers: [])))
@@ -1940,9 +1940,77 @@ final class HotkeyShortcutTests: XCTestCase {
     }
 
     @MainActor
+    func testSuggestionDismissalPreservesHoldRecordingAndOwnedRelease() async throws {
+        let settings = SettingsStore.shared
+        let previous = settings.cancelRecordingHotkeyShortcut
+        defer { settings.cancelRecordingHotkeyShortcut = previous }
+        for modifierOnly in [false, true] {
+            let asr = ASRService()
+            defer { asr.isRunning = false }
+            var starts = 0
+            var stops = 0
+            let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: { starts += 1; asr.isRunning = true }, onStop: { stops += 1; asr.isRunning = false })
+            manager.setHotkeyMode(.hold)
+            if modifierOnly { manager.updatePrimaryShortcuts([HotkeyShortcut(keyCode: 61, modifierFlags: [], modifierKeyCodes: [61])]) }
+            let heldModifiers: CGEventFlags = modifierOnly ? .maskAlternate : [.maskControl, .maskCommand]
+            settings.cancelRecordingHotkeyShortcut = HotkeyShortcut(keyCode: 53, modifierFlags: modifierOnly ? .option : [.control, .command])
+            manager.setCancelCallback { .dismissedOverlay }
+            let down = try self.primaryReleaseTestEvent(
+                type: modifierOnly ? .flagsChanged : .keyDown,
+                keyCode: modifierOnly ? 61 : 2,
+                modifiers: heldModifiers
+            )
+            _ = manager.handleKeyEvent(type: down.type, event: down)
+            for _ in 0..<20 {
+                await Task.yield()
+            }
+            XCTAssertTrue(asr.isRunning)
+            let escape = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: 53, modifiers: heldModifiers)
+            XCTAssertNil(manager.handleKeyEvent(type: .keyDown, event: escape))
+            for _ in 0..<20 {
+                await Task.yield()
+            }
+            XCTAssertTrue(asr.isRunning, "Only dismiss the suggestion; keep the current recording")
+            XCTAssertEqual(stops, 0)
+            let up = try self.primaryReleaseTestEvent(type: modifierOnly ? .flagsChanged : .keyUp, keyCode: modifierOnly ? 61 : 2, modifiers: modifierOnly ? [] : heldModifiers)
+            _ = manager.handleKeyEvent(type: up.type, event: up)
+            for _ in 0..<20 {
+                await Task.yield()
+            }
+            XCTAssertEqual(starts, 1)
+            XCTAssertEqual(stops, 1, "Dismissal must not orphan the held recording's release")
+            XCTAssertFalse(asr.isRunning)
+        }
+    }
+
+    @MainActor
+    func testCancelBeforeToggleReleaseDoesNotNeedApplicationUIToHandleIt() async throws {
+        let settings = SettingsStore.shared
+        let previous = settings.cancelRecordingHotkeyShortcut
+        defer { settings.cancelRecordingHotkeyShortcut = previous }
+        settings.cancelRecordingHotkeyShortcut = HotkeyShortcut(keyCode: 53, modifierFlags: [.control, .command])
+        var starts = 0
+        let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: { starts += 1 })
+        manager.setCancelCallback { .unhandled }
+        _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
+        _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown, keyCode: 53, modifiers: [.maskControl, .maskCommand]))
+        _ = try manager.handleKeyEvent(type: .keyUp, event: self.primaryReleaseTestEvent(type: .keyUp))
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        XCTAssertEqual(starts, 0)
+        _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
+        _ = try manager.handleKeyEvent(type: .keyUp, event: self.primaryReleaseTestEvent(type: .keyUp))
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        XCTAssertEqual(starts, 1)
+    }
+
+    @MainActor
     func testIdleCancelPassesThroughWhenApplicationHasNothingToHandle() throws {
         let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
-        manager.setCancelCallback { false }
+        manager.setCancelCallback { .unhandled }
         let event = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: 53, modifiers: [])
         let result = manager.handleKeyEvent(type: .keyDown, event: event)
         withExtendedLifetime(event) { XCTAssertNotNil(result) }
