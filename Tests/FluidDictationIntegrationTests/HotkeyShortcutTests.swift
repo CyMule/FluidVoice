@@ -1984,6 +1984,34 @@ final class HotkeyShortcutTests: XCTestCase {
     }
 
     @MainActor
+    func testSuggestionDismissalInterruptsModifierOnlyToggleWithoutStartingRecording() async throws {
+        let settings = SettingsStore.shared
+        let previous = settings.cancelRecordingHotkeyShortcut
+        defer { settings.cancelRecordingHotkeyShortcut = previous }
+        settings.cancelRecordingHotkeyShortcut = HotkeyShortcut(keyCode: 53, modifierFlags: .option)
+        var starts = 0
+        let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: { starts += 1 })
+        manager.updatePrimaryShortcuts([HotkeyShortcut(keyCode: 61, modifierFlags: [], modifierKeyCodes: [61])])
+        manager.setCancelCallback { .dismissedOverlay }
+        let down = try self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 61, modifiers: .maskAlternate)
+        _ = manager.handleKeyEvent(type: .flagsChanged, event: down)
+        let escape = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: 53, modifiers: .maskAlternate)
+        XCTAssertNil(manager.handleKeyEvent(type: .keyDown, event: escape))
+        let up = try self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 61, modifiers: [])
+        _ = manager.handleKeyEvent(type: .flagsChanged, event: up)
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        XCTAssertEqual(starts, 0, "Closing the suggestion must not count as a clean modifier tap")
+        _ = manager.handleKeyEvent(type: .flagsChanged, event: down)
+        _ = manager.handleKeyEvent(type: .flagsChanged, event: up)
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        XCTAssertEqual(starts, 1, "The next genuine modifier tap must still work")
+    }
+
+    @MainActor
     func testCancelBeforeToggleReleaseDoesNotNeedApplicationUIToHandleIt() async throws {
         let settings = SettingsStore.shared
         let previous = settings.cancelRecordingHotkeyShortcut

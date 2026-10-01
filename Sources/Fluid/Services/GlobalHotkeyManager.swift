@@ -1280,7 +1280,10 @@ final class GlobalHotkeyManager: NSObject {
             if SettingsStore.shared.cancelRecordingHotkeyShortcut?.matches(keyCode: keyCode, modifiers: eventModifiers) == true {
                 let result = self.cancelCallback?() ?? .unhandled
                 // Closing a suggestion must preserve the held shortcut and capture.
-                if result == .dismissedOverlay { return nil }
+                if result == .dismissedOverlay {
+                    self.markOtherInputDuringModifierOnly()
+                    return nil
+                }
                 var handled = result == .cancelled
                 if !handled, self.asrService.isRunningOrStarting {
                     Task { @MainActor in await self.asrService.stopWithoutTranscription() }
