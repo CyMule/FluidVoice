@@ -976,6 +976,18 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertTrue(cancel.contains("self.stopSpokenSendVoiceActivityMonitoring()"))
     }
 
+    func testVoiceCommandForwardsEscapeCancellationIntoAgentLoop() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)
+        XCTAssertTrue(source.contains("await self.processCommandWithVoice(transcribedText, lifecycleID: expectedOverlayLifecycleID)"))
+        let start = try XCTUnwrap(source.range(of: "private func processCommandWithVoice("))
+        let end = try XCTUnwrap(source.range(of: "/// Capture app context", range: start.upperBound..<source.endIndex))
+        let command = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(command.contains("notifyInvalidRequest: true, isOutputValid: {"))
+        XCTAssertTrue(command.contains("self.cancelledOutputLifecycleID != lifecycleID"))
+        XCTAssertEqual(command.components(separatedBy: "guard self.cancelledOutputLifecycleID != lifecycleID else { return }").count - 1, 2)
+    }
+
     func testCancelledProcessingCannotPublishDelayedOverlayOrPracticeResult() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)

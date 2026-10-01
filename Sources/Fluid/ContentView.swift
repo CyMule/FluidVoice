@@ -3069,7 +3069,7 @@ struct ContentView: View {
                 mode: .command,
                 descriptor: self.settings.selectedSpeechModel.analyticsDescriptor
             )
-            await self.processCommandWithVoice(transcribedText)
+            await self.processCommandWithVoice(transcribedText, lifecycleID: expectedOverlayLifecycleID)
             cancelledAtASRStop = self.cancelledOutputLifecycleID == expectedOverlayLifecycleID
             if !cancelledAtASRStop { return }
         }
@@ -4521,7 +4521,8 @@ struct ContentView: View {
 
     // MARK: - Command Mode Voice Processing
 
-    private func processCommandWithVoice(_ command: String) async {
+    private func processCommandWithVoice(_ command: String, lifecycleID: UInt64) async {
+        guard self.cancelledOutputLifecycleID != lifecycleID else { return }
         DebugLogger.shared.info("Processing voice command: '\(command)'", source: "ContentView")
 
         // Show processing animation
@@ -4529,7 +4530,10 @@ struct ContentView: View {
 
         // Process the command through CommandModeService
         // This stores the conversation history and executes any terminal commands
-        await self.commandModeService.processUserCommand(command, notifyInvalidRequest: true)
+        await self.commandModeService.processUserCommand(command, notifyInvalidRequest: true, isOutputValid: {
+            self.cancelledOutputLifecycleID != lifecycleID
+        })
+        guard self.cancelledOutputLifecycleID != lifecycleID else { return }
 
         // Hide processing animation
         self.menuBarManager.setProcessing(false)
