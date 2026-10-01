@@ -744,7 +744,7 @@ struct SettingsView: View {
                                                     icon: "xmark.circle.fill",
                                                     iconColor: .secondary,
                                                     title: "Cancel Recording",
-                                                    description: "Cancel the current recording or dismiss the active recording overlay"
+                                                    description: "Stop without pasting; save to History when enabled"
                                                 ),
                                                 shortcut: self.cancelRecordingShortcut,
                                                 isRecording: self.isRecording(.cancel),

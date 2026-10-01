@@ -7158,13 +7158,15 @@ final class ASRService: ObservableObject {
         _ text: String,
         preferredTargetPID: pid_t?,
         textReadyAt: TimeInterval? = nil,
-        preserveTranscriptOnClipboard: Bool = false
+        preserveTranscriptOnClipboard: Bool = false,
+        isOutputValid: @escaping @MainActor () -> Bool = { true }
     ) async -> TextDeliveryResult {
         await self.typeOutputPlanToActiveField(
             .plain(text),
             preferredTargetPID: preferredTargetPID,
             textReadyAt: textReadyAt,
-            preserveTranscriptOnClipboard: preserveTranscriptOnClipboard
+            preserveTranscriptOnClipboard: preserveTranscriptOnClipboard,
+            isOutputValid: isOutputValid
         )
     }
 
@@ -7175,7 +7177,8 @@ final class ASRService: ObservableObject {
         textReadyAt: TimeInterval? = nil,
         toggleStopRequestedAt: TimeInterval? = nil,
         tracksDictionaryCorrections: Bool = false,
-        preserveTranscriptOnClipboard: Bool = false
+        preserveTranscriptOnClipboard: Bool = false,
+        isOutputValid: @escaping @MainActor () -> Bool = { true }
     ) async -> TextDeliveryResult {
         let requestedAt = ProcessInfo.processInfo.systemUptime
         let textReadyAge = textReadyAt.map { Int(((requestedAt - $0) * 1000).rounded()) }
@@ -7191,7 +7194,8 @@ final class ASRService: ObservableObject {
             textReadyAt: textReadyAt,
             toggleStopRequestedAt: toggleStopRequestedAt,
             tracksDictionaryCorrections: tracksDictionaryCorrections,
-            preserveTranscriptOnClipboard: preserveTranscriptOnClipboard
+            preserveTranscriptOnClipboard: preserveTranscriptOnClipboard,
+            isOutputValid: isOutputValid
         )
         let dispatchedAt = ProcessInfo.processInfo.systemUptime
         let textReadyToDispatchMs = textReadyAt.map {
@@ -7227,7 +7231,8 @@ final class ASRService: ObservableObject {
         tracksDictionaryCorrections: Bool = false,
         postInsertionKey: SettingsStore.SpokenSendKey? = nil,
         requiredFocusTarget: TypingService.CapturedFocusTarget? = nil,
-        preserveTranscriptOnClipboard: Bool = false
+        preserveTranscriptOnClipboard: Bool = false,
+        isOutputValid: @escaping @MainActor () -> Bool = { true }
     ) async -> TypingService.DeliveryOutcome {
         let requestedAt = ProcessInfo.processInfo.systemUptime
         let textReadyAge = textReadyAt.map { Int(((requestedAt - $0) * 1000).rounded()) }
@@ -7246,7 +7251,8 @@ final class ASRService: ObservableObject {
                 tracksDictionaryCorrections: tracksDictionaryCorrections,
                 postInsertionKey: postInsertionKey,
                 requiredFocusTarget: requiredFocusTarget,
-                preserveTranscriptOnClipboard: preserveTranscriptOnClipboard
+                preserveTranscriptOnClipboard: preserveTranscriptOnClipboard,
+                isOutputValid: isOutputValid
             ) { outcome in
                 continuation.resume(returning: outcome)
             }

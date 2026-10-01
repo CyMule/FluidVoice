@@ -327,6 +327,7 @@ final class GlobalHotkeyManager: NSObject {
         case shortcutCapture
         case tapDisabled
         case reinitialize
+        case cancel
     }
 
     private nonisolated var isKeyPressed: Bool {
@@ -1271,28 +1272,16 @@ final class GlobalHotkeyManager: NSObject {
             { self.activePrimaryShortcutPress = nil }
             self.markOtherInputDuringModifierOnly()
 
-            // Check the configured cancel shortcut first.
+            // The application owns cancellation output; fallback managers only discard capture.
             if SettingsStore.shared.cancelRecordingHotkeyShortcut?.matches(keyCode: keyCode, modifiers: eventModifiers) == true {
-                var handled = self.pendingRecordingActionCounts.values.contains { $0 > 0 }
-
-                if self.asrService.isRunning || self.asrService.isStarting {
-                    DebugLogger.shared.info("Cancel shortcut pressed - cancelling recording", source: "GlobalHotkeyManager")
-                    Task { @MainActor in
-                        await self.asrService.stopWithoutTranscription()
-                    }
+                var handled = self.cancelCallback?() ?? false
+                if !handled, self.asrService.isRunningOrStarting {
+                    Task { @MainActor in await self.asrService.stopWithoutTranscription() }
                     handled = true
                 }
-
-                // Trigger cancel callback to close mode views / reset state
-                if let callback = cancelCallback, callback() {
-                    DebugLogger.shared.info("Cancel shortcut pressed - cancel callback handled", source: "GlobalHotkeyManager")
-                    handled = true
-                }
-
-                if handled {
-                    self.invalidateAllRecordingActions()
-                    if self.hotkeyMode == .toggle { self.activePrimaryShortcutPress = nil }
-                    return nil // Consume event only if we did something
+                if handled || self.pendingRecordingActionCounts.values.contains(where: { $0 > 0 }) {
+                    self.resetModifierOnlyShortcutTracking(reason: .cancel)
+                    return nil
                 }
             }
 
@@ -1965,7 +1954,7 @@ final class GlobalHotkeyManager: NSObject {
         self.invalidateAllRecordingActions()
         self.modifierPressReceivedAt = nil
         self.currentStopPressReceivedAt = nil
-        let shouldStopActiveHold = self.hotkeyMode != .toggle
+        let shouldStopActiveHold = reason != .cancel && self.hotkeyMode != .toggle
             && self.asrService.isRunningOrStarting
             && (self.isKeyPressed || self.isPromptModeKeyPressed || self.isCommandModeKeyPressed || self.isRewriteKeyPressed || self.isPromptAssignmentKeyPressed)
 
@@ -1990,6 +1979,8 @@ final class GlobalHotkeyManager: NSObject {
                 DebugLogger.shared.debug("Shortcut capture active - stopping active hold recording before reset", source: "GlobalHotkeyManager")
             case .tapDisabled:
                 DebugLogger.shared.warning("Event tap disabled during active hold - stopping recording before reset", source: "GlobalHotkeyManager")
+            case .cancel:
+                break
             case .reinitialize:
                 DebugLogger.shared.info("Hotkey manager reinitializing - stopping active hold recording before reset", source: "GlobalHotkeyManager")
             }
@@ -2679,7 +2670,9 @@ private extension GlobalHotkeyManager {
             return press.shortcut
         }
     }
+}
 
+extension GlobalHotkeyManager {
     func traceStopLocked() -> TimeInterval {
         OverlayCloseRunLoopProbe.begin()
         self.isProcessingStop = true
@@ -2693,9 +2686,7 @@ private extension GlobalHotkeyManager {
             source: "StopTiming"
         )
     }
-}
 
-extension GlobalHotkeyManager {
     nonisolated static func isSynthesizedTypingEvent(_ event: CGEvent) -> Bool {
         event.getIntegerValueField(.eventSourceUserData) == TypingService.synthesizedEventUserData
     }

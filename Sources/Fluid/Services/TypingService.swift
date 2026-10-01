@@ -308,29 +308,30 @@ final class TypingService {
         TypingService().captureTextBeforeCursorInFocusedField()
     }
 
-    static func prepareTargetForDelivery(_ context: RecordingTargetContext) async -> FocusPreparationResult {
+    static func prepareTargetForDelivery(_ context: RecordingTargetContext, isOutputValid: @escaping @MainActor () -> Bool = { true }) async -> FocusPreparationResult {
+        guard isOutputValid() else { return .failed }
         if context.pid == self.currentFocusedPID(),
            context.element == nil || self.isCapturedFocusStillActive(context)
         {
             return .alreadyFocused
         }
 
-        if await self.restoreExactTarget(context) {
+        if await self.restoreExactTarget(context, isOutputValid: isOutputValid) {
             return .restoredExactTarget
         }
 
-        guard context.window != nil, context.element != nil,
+        guard isOutputValid(), context.window != nil, context.element != nil,
               self.activateAppForRecovery(pid: context.pid)
         else {
             return .failed
         }
 
         try? await Task.sleep(nanoseconds: 25_000_000)
-        return await self.restoreExactTarget(context) ? .activatedForRecovery : .failed
+        return await self.restoreExactTarget(context, isOutputValid: isOutputValid) ? .activatedForRecovery : .failed
     }
 
-    private static func restoreExactTarget(_ context: RecordingTargetContext) async -> Bool {
-        guard AXIsProcessTrusted(), context.window != nil, context.element != nil else { return false }
+    private static func restoreExactTarget(_ context: RecordingTargetContext, isOutputValid: @escaping @MainActor () -> Bool) async -> Bool {
+        guard isOutputValid(), AXIsProcessTrusted(), context.window != nil, context.element != nil else { return false }
 
         self.logFocusState("[TypingService] Before restoreExactTarget")
         let appElement = AXUIElementCreateApplication(context.pid)
@@ -342,9 +343,10 @@ final class TypingService {
             try? await Task.sleep(nanoseconds: 25_000_000)
         }
 
-        guard let element = context.element else { return false }
+        guard isOutputValid(), let element = context.element else { return false }
 
         for attempt in 0..<3 {
+            guard isOutputValid() else { return false }
             let result = AXUIElementSetAttributeValue(
                 element,
                 kAXFocusedAttribute as CFString,
@@ -443,14 +445,16 @@ final class TypingService {
         preferredTargetPID: pid_t?,
         textReadyAt: TimeInterval?,
         toggleStopRequestedAt: TimeInterval? = nil,
-        preserveTranscriptOnClipboard: Bool = false
+        preserveTranscriptOnClipboard: Bool = false,
+        isOutputValid: @escaping @MainActor () -> Bool = { true }
     ) async -> TextDeliveryResult {
         await self.typeOutputPlanInstantly(
             .plain(text),
             preferredTargetPID: preferredTargetPID,
             textReadyAt: textReadyAt,
             toggleStopRequestedAt: toggleStopRequestedAt,
-            preserveTranscriptOnClipboard: preserveTranscriptOnClipboard
+            preserveTranscriptOnClipboard: preserveTranscriptOnClipboard,
+            isOutputValid: isOutputValid
         )
     }
 
@@ -462,8 +466,10 @@ final class TypingService {
         toggleStopRequestedAt: TimeInterval? = nil,
         tracksDictionaryCorrections: Bool = false,
         preserveTranscriptOnClipboard: Bool = false,
-        verifiesLanding: Bool = true
+        verifiesLanding: Bool = true,
+        isOutputValid: @escaping @MainActor () -> Bool = { true }
     ) async -> TextDeliveryResult {
+        guard isOutputValid() else { return .cancelled }
         let requestedAt = ProcessInfo.processInfo.systemUptime
         var closeTrace = OverlayCloseTrace("typing.delivery")
         defer { closeTrace.finish() }
@@ -493,7 +499,8 @@ final class TypingService {
 
         // Check accessibility permissions first
         guard AXIsProcessTrusted() else {
-            await PasteDeliveryCoordinator.shared.copyBackup(text, enabled: preserveTranscriptOnClipboard)
+            await PasteDeliveryCoordinator.shared.copyBackup(text, enabled: preserveTranscriptOnClipboard, isOutputValid: isOutputValid)
+            guard isOutputValid() else { return .cancelled }
             self.bench("request_return reason=accessibility_not_trusted")
             self.log("[TypingService] ERROR: Accessibility permissions required for text injection")
             self.log("[TypingService] Current accessibility status: \(AXIsProcessTrusted())")
@@ -512,7 +519,8 @@ final class TypingService {
         let targetAssessment = DeliveryTargetAssessment.assessFocusedElement()
         DebugLogger.shared.info("FOCUS_ASSESS \(targetAssessment.logDescription)", source: "TypingService")
         if targetAssessment.isCertainlyNotEditable {
-            await PasteDeliveryCoordinator.shared.copyBackup(text, enabled: preserveTranscriptOnClipboard)
+            await PasteDeliveryCoordinator.shared.copyBackup(text, enabled: preserveTranscriptOnClipboard, isOutputValid: isOutputValid)
+            guard isOutputValid() else { return .cancelled }
             self.bench("request_return reason=no_editable_target")
             let result = TextDeliveryResult.recoverableFailure(.noEditableTarget)
             self.recordInsertionLatency(
@@ -538,11 +546,12 @@ final class TypingService {
             result = await PasteDeliveryCoordinator.shared.deliver(
                 text,
                 preserveTranscriptOnClipboard: preserveTranscriptOnClipboard,
+                isOutputValid: isOutputValid,
                 onCommandPosted: { dispatchedAt = $0 }
             )
-        } else if await self.insertTextDirectlyOffMain(text, preferredTargetPID: preferredTargetPID) {
+        } else if await self.insertTextDirectlyOffMain(text, preferredTargetPID: preferredTargetPID, isOutputValid: isOutputValid) {
             deliveryPath = .direct
-            await PasteDeliveryCoordinator.shared.copyBackup(text, enabled: preserveTranscriptOnClipboard)
+            await PasteDeliveryCoordinator.shared.copyBackup(text, enabled: preserveTranscriptOnClipboard, isOutputValid: isOutputValid)
             result = .commandPosted
         } else {
             deliveryPath = .clipboardFallback
@@ -551,10 +560,12 @@ final class TypingService {
             result = await PasteDeliveryCoordinator.shared.deliver(
                 text,
                 preserveTranscriptOnClipboard: preserveTranscriptOnClipboard,
+                isOutputValid: isOutputValid,
                 onCommandPosted: { dispatchedAt = $0 }
             )
         }
 
+        guard result != .cancelled, isOutputValid() else { return .cancelled }
         let completedAt = dispatchedAt ?? ProcessInfo.processInfo.systemUptime
         self.bench(
             "complete result=\(String(describing: result)) totalMs=\(Self.elapsedMs(from: requestedAt, to: completedAt)) textReadyToCompleteMs=\(textReadyAt.map { String(Self.elapsedMs(from: $0, to: completedAt)) } ?? "nil")"
@@ -585,9 +596,11 @@ final class TypingService {
         postInsertionKey: SettingsStore.SpokenSendKey? = nil,
         requiredFocusTarget: CapturedFocusTarget? = nil,
         preserveTranscriptOnClipboard: Bool = false,
+        isOutputValid: @escaping @MainActor () -> Bool = { true },
         completion: (@MainActor (DeliveryOutcome) -> Void)? = nil
     ) {
         Task { @MainActor in
+            guard isOutputValid() else { completion?(.rejected); return }
             let hasTextToInsert = !plan.plainText.isEmpty
             guard hasTextToInsert || postInsertionKey != nil else {
                 completion?(.rejected)
@@ -603,7 +616,7 @@ final class TypingService {
                           exactFocusIsActive: Self.isExactFocusTargetActive(requiredFocusTarget)
                       )
                 else {
-                    await PasteDeliveryCoordinator.shared.copyBackup(plan.plainText, enabled: preserveTranscriptOnClipboard)
+                    await PasteDeliveryCoordinator.shared.copyBackup(plan.plainText, enabled: preserveTranscriptOnClipboard, isOutputValid: isOutputValid)
                     completion?(.actionSuppressed)
                     return
                 }
@@ -619,15 +632,17 @@ final class TypingService {
                     tracksDictionaryCorrections: tracksDictionaryCorrections,
                     preserveTranscriptOnClipboard: preserveTranscriptOnClipboard,
                     // A send key empties the field right after the paste, so the read-back would report a false miss.
-                    verifiesLanding: postInsertionKey == nil
+                    verifiesLanding: postInsertionKey == nil,
+                    isOutputValid: isOutputValid
                 )
                 guard result.wasDispatched else {
-                    completion?(.insertionFailed)
+                    completion?(result == .cancelled ? .rejected : .insertionFailed)
                     return
                 }
                 outcome = .inserted
             }
 
+            guard isOutputValid() else { completion?(hasTextToInsert ? .insertedActionSuppressed : .actionSuppressed); return }
             guard let postInsertionKey else {
                 completion?(outcome)
                 if tracksDictionaryCorrections, outcome.didInsert {
@@ -645,7 +660,7 @@ final class TypingService {
             }
 
             let modifiersReleased = await self.waitForPhysicalModifiersToRelease(timeout: 2)
-            guard Self.canDispatchPostInsertionAction(
+            guard isOutputValid(), Self.canDispatchPostInsertionAction(
                 preferredTargetPID: preferredTargetPID,
                 requiredTargetPID: requiredFocusTarget.pid,
                 isSecureTextField: requiredFocusTarget.isSecureTextField,
@@ -657,7 +672,7 @@ final class TypingService {
             }
 
             try? await Task.sleep(nanoseconds: 50_000_000)
-            guard Self.isExactFocusTargetActive(requiredFocusTarget),
+            guard isOutputValid(), Self.isExactFocusTargetActive(requiredFocusTarget),
                   await self.postReturnKey(postInsertionKey, targetPID: preferredTargetPID)
             else {
                 completion?(hasTextToInsert ? .insertedActionSuppressed : .actionSuppressed)
@@ -679,7 +694,7 @@ final class TypingService {
         toggleStopRequestedAt: TimeInterval?,
         completedAt: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) {
-        let outcome = Self.analyticsOutcome(for: result)
+        guard let outcome = Self.analyticsOutcome(for: result) else { return }
         let isClipboardDispatch = outcome == .dispatched &&
             (path == .clipboard || path == .clipboardFallback)
         AnalyticsService.shared.recordInsertionLatency(
@@ -720,8 +735,10 @@ final class TypingService {
         }
     }
 
-    private static func analyticsOutcome(for result: TextDeliveryResult) -> AnalyticsInsertionOutcome {
+    private static func analyticsOutcome(for result: TextDeliveryResult) -> AnalyticsInsertionOutcome? {
         switch result {
+        case .cancelled:
+            nil
         case .commandPosted:
             .dispatched
         case let .recoverableFailure(failure):
@@ -749,9 +766,11 @@ final class TypingService {
 
     // MARK: - Internal insertion pipeline
 
-    private func insertTextDirectlyOffMain(_ text: String, preferredTargetPID: pid_t?) async -> Bool {
+    private func insertTextDirectlyOffMain(_ text: String, preferredTargetPID: pid_t?, isOutputValid: @escaping @MainActor () -> Bool) async -> Bool {
         await withCheckedContinuation { continuation in
             Self.directInsertionQueue.async {
+                let valid = DispatchQueue.main.sync { MainActor.assumeIsolated { isOutputValid() } }
+                guard valid else { continuation.resume(returning: false); return }
                 continuation.resume(
                     returning: self.insertTextDirectly(text, preferredTargetPID: preferredTargetPID)
                 )

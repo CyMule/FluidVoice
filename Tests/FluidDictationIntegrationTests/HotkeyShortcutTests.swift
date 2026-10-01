@@ -1,3 +1,5 @@
+// Event replay matrices share private helpers in this regression suite.
+// swiftlint:disable file_length
 import AppKit
 import Combine
 import CoreAudio
@@ -6,6 +8,7 @@ import Foundation
 import SwiftUI
 import XCTest
 
+// swiftlint:disable:next type_body_length
 final class HotkeyShortcutTests: XCTestCase {
     @MainActor
     func testOverlayAppearanceRejectsNonfiniteTransparency() {
@@ -232,13 +235,17 @@ final class HotkeyShortcutTests: XCTestCase {
         defer { asr.isRunning = false }
         var starts = 0
         var stops = 0
-        let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: {
-            starts += 1
-            asr.isRunning = true
-        }, onStop: {
-            stops += 1
-            asr.isRunning = false
-        })
+        let manager = self.makePrimaryReleaseTestManager(
+            asr: asr,
+            onStart: {
+                starts += 1
+                asr.isRunning = true
+            },
+            onStop: {
+                stops += 1
+                asr.isRunning = false
+            }
+        )
         let down = try self.primaryReleaseTestEvent(type: .keyDown)
         let up = try self.primaryReleaseTestEvent(type: .keyUp, modifiers: [])
 
@@ -669,13 +676,17 @@ final class HotkeyShortcutTests: XCTestCase {
         defer { asr.isRunning = false }
         var starts = 0
         var stops = 0
-        let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: {
-            starts += 1
-            asr.isRunning = true
-        }, onStop: {
-            stops += 1
-            asr.isRunning = false
-        })
+        let manager = self.makePrimaryReleaseTestManager(
+            asr: asr,
+            onStart: {
+                starts += 1
+                asr.isRunning = true
+            },
+            onStop: {
+                stops += 1
+                asr.isRunning = false
+            }
+        )
         let down = try self.primaryReleaseTestEvent(type: .keyDown)
         let up = try self.primaryReleaseTestEvent(type: .keyUp)
         for _ in 0..<2 {
@@ -832,13 +843,20 @@ final class HotkeyShortcutTests: XCTestCase {
             let command = HotkeyShortcut(keyCode: 54, modifierFlags: [], modifierKeyCodes: [54])
             let option = HotkeyShortcut(keyCode: 61, modifierFlags: [], modifierKeyCodes: [61])
             let manager = GlobalHotkeyManager(
-                asrService: ASRService(), primaryShortcuts: [option], promptModeShortcut: command,
-                commandModeShortcut: command, rewriteModeShortcut: command,
+                asrService: ASRService(),
+                primaryShortcuts: [option],
+                promptModeShortcut: command,
+                commandModeShortcut: command,
+                rewriteModeShortcut: command,
                 promptShortcutAssignments: mode == .promptAssignment ? [(selection: SettingsStore.DictationPromptSelection.default, shortcut: command)] : [],
-                promptModeShortcutEnabled: mode == .promptMode, commandModeShortcutEnabled: mode == .commandMode,
-                rewriteModeShortcutEnabled: mode == .rewriteMode, dictationModeCallback: { starts += 1 },
-                promptModeCallback: { otherStarts += 1 }, promptSelectionCallback: { _ in otherStarts += 1 },
-                commandModeCallback: { otherStarts += 1 }, rewriteModeCallback: { otherStarts += 1 }
+                promptModeShortcutEnabled: mode == .promptMode,
+                commandModeShortcutEnabled: mode == .commandMode,
+                rewriteModeShortcutEnabled: mode == .rewriteMode,
+                dictationModeCallback: { starts += 1 },
+                promptModeCallback: { otherStarts += 1 },
+                promptSelectionCallback: { _ in otherStarts += 1 },
+                commandModeCallback: { otherStarts += 1 },
+                rewriteModeCallback: { otherStarts += 1 }
             )
             manager.setHotkeyMode(.toggle)
             _ = try manager.handleKeyEvent(type: .flagsChanged, event: self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 54, modifiers: .maskCommand))
@@ -1001,13 +1019,19 @@ final class HotkeyShortcutTests: XCTestCase {
             let old = HotkeyShortcut(keyCode: 54, modifierFlags: [], modifierKeyCodes: [54])
             let new = HotkeyShortcut(keyCode: 60, modifierFlags: [], modifierKeyCodes: [60])
             let manager = GlobalHotkeyManager(
-                asrService: ASRService(), primaryShortcuts: [], promptModeShortcut: old,
-                commandModeShortcut: old, rewriteModeShortcut: old,
+                asrService: ASRService(),
+                primaryShortcuts: [],
+                promptModeShortcut: old,
+                commandModeShortcut: old,
+                rewriteModeShortcut: old,
                 promptShortcutAssignments: mode == .promptAssignment ? [(selection: .default, shortcut: old)] : [],
-                promptModeShortcutEnabled: mode == .promptMode, commandModeShortcutEnabled: mode == .commandMode,
+                promptModeShortcutEnabled: mode == .promptMode,
+                commandModeShortcutEnabled: mode == .commandMode,
                 rewriteModeShortcutEnabled: mode == .rewriteMode,
-                promptModeCallback: { starts += 1 }, promptSelectionCallback: { _ in starts += 1 },
-                commandModeCallback: { starts += 1 }, rewriteModeCallback: { starts += 1 }
+                promptModeCallback: { starts += 1 },
+                promptSelectionCallback: { _ in starts += 1 },
+                commandModeCallback: { starts += 1 },
+                rewriteModeCallback: { starts += 1 }
             )
             manager.setHotkeyMode(.toggle)
             _ = try manager.handleKeyEvent(type: .flagsChanged, event: self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 54, modifiers: .maskCommand))
@@ -1057,13 +1081,21 @@ final class HotkeyShortcutTests: XCTestCase {
                 var starts = 0
                 let bare = HotkeyShortcut(keyCode: 31, modifierFlags: [])
                 let manager = GlobalHotkeyManager(
-                    asrService: ASRService(), primaryShortcuts: mode == .transcription ? [bare] : [],
-                    promptModeShortcut: bare, commandModeShortcut: bare, rewriteModeShortcut: bare,
+                    asrService: ASRService(),
+                    primaryShortcuts: mode == .transcription ? [bare] : [],
+                    promptModeShortcut: bare,
+                    commandModeShortcut: bare,
+                    rewriteModeShortcut: bare,
                     promptShortcutAssignments: mode == .promptAssignment ? [(selection: .default, shortcut: bare)] : [],
-                    promptModeShortcutEnabled: mode == .promptMode, commandModeShortcutEnabled: mode == .commandMode,
-                    rewriteModeShortcutEnabled: mode == .rewriteMode, startRecordingCallback: { starts += 1 },
-                    dictationModeCallback: { starts += 1 }, promptModeCallback: { starts += 1 },
-                    promptSelectionCallback: { _ in starts += 1 }, commandModeCallback: { starts += 1 }, rewriteModeCallback: { starts += 1 }
+                    promptModeShortcutEnabled: mode == .promptMode,
+                    commandModeShortcutEnabled: mode == .commandMode,
+                    rewriteModeShortcutEnabled: mode == .rewriteMode,
+                    startRecordingCallback: { starts += 1 },
+                    dictationModeCallback: { starts += 1 },
+                    promptModeCallback: { starts += 1 },
+                    promptSelectionCallback: { _ in starts += 1 },
+                    commandModeCallback: { starts += 1 },
+                    rewriteModeCallback: { starts += 1 }
                 )
                 manager.setHotkeyMode(activation)
                 let down = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: 31, modifiers: [])
@@ -1080,7 +1112,18 @@ final class HotkeyShortcutTests: XCTestCase {
 
     @MainActor
     func testIssue556SavedBareTypingBindingsAreOffWithoutChangingModelsOrCancel() throws {
-        try self.withRestoredDefaults(keys: [self.primaryDictationShortcutsKey, self.legacyHotkeyShortcutKey, "DictationPromptConfigurations", "PromptModeHotkeyShortcut", "PromptModeShortcutEnabled", "CommandModeHotkeyShortcut", "CommandModeShortcutEnabled", "RewriteModeHotkeyShortcut", "RewriteModeShortcutEnabled", "CancelRecordingHotkeyShortcut"]) {
+        try self.withRestoredDefaults(keys: [
+            self.primaryDictationShortcutsKey,
+            self.legacyHotkeyShortcutKey,
+            "DictationPromptConfigurations",
+            "PromptModeHotkeyShortcut",
+            "PromptModeShortcutEnabled",
+            "CommandModeHotkeyShortcut",
+            "CommandModeShortcutEnabled",
+            "RewriteModeHotkeyShortcut",
+            "RewriteModeShortcutEnabled",
+            "CancelRecordingHotkeyShortcut",
+        ]) {
             let settings = SettingsStore.shared
             let bare = HotkeyShortcut(keyCode: 31, modifierFlags: [])
             let data = try JSONEncoder().encode(bare)
@@ -1149,7 +1192,13 @@ final class HotkeyShortcutTests: XCTestCase {
             await Task.yield()
         }
         XCTAssertEqual(starts, 0)
-        let allowed = [HotkeyShortcut(keyCode: 50, modifierFlags: []), HotkeyShortcut(keyCode: 43, modifierFlags: []), HotkeyShortcut(keyCode: 47, modifierFlags: []), HotkeyShortcut(keyCode: 36, modifierFlags: .control), HotkeyShortcut(keyCode: 53, modifierFlags: .control)]
+        let allowed = [
+            HotkeyShortcut(keyCode: 50, modifierFlags: []),
+            HotkeyShortcut(keyCode: 43, modifierFlags: []),
+            HotkeyShortcut(keyCode: 47, modifierFlags: []),
+            HotkeyShortcut(keyCode: 36, modifierFlags: .control),
+            HotkeyShortcut(keyCode: 53, modifierFlags: .control),
+        ]
         for shortcut in allowed {
             manager.updatePrimaryShortcuts([shortcut])
             let flags: CGEventFlags = shortcut.modifierFlags.isEmpty ? [] : .maskControl
@@ -1169,7 +1218,17 @@ final class HotkeyShortcutTests: XCTestCase {
 
     @MainActor
     func testSavedPunctuationAndModifiedBindingsStayEnabled() throws {
-        try self.withRestoredDefaults(keys: [self.primaryDictationShortcutsKey, self.legacyHotkeyShortcutKey, "DictationPromptConfigurations", "PromptModeHotkeyShortcut", "PromptModeShortcutEnabled", "CommandModeHotkeyShortcut", "CommandModeShortcutEnabled", "RewriteModeHotkeyShortcut", "RewriteModeShortcutEnabled"]) {
+        try self.withRestoredDefaults(keys: [
+            self.primaryDictationShortcutsKey,
+            self.legacyHotkeyShortcutKey,
+            "DictationPromptConfigurations",
+            "PromptModeHotkeyShortcut",
+            "PromptModeShortcutEnabled",
+            "CommandModeHotkeyShortcut",
+            "CommandModeShortcutEnabled",
+            "RewriteModeHotkeyShortcut",
+            "RewriteModeShortcutEnabled",
+        ]) {
             let settings = SettingsStore.shared
             for shortcut in [HotkeyShortcut(keyCode: 50, modifierFlags: []), HotkeyShortcut(keyCode: 2, modifierFlags: [.control, .command]), HotkeyShortcut(keyCode: 61, modifierFlags: [])] {
                 settings.primaryDictationShortcuts = [HotkeyShortcut(keyCode: 3, modifierFlags: []), shortcut]
@@ -1196,10 +1255,15 @@ final class HotkeyShortcutTests: XCTestCase {
         let command = HotkeyShortcut(keyCode: 54, modifierFlags: [], modifierKeyCodes: [54])
         let shift = HotkeyShortcut(keyCode: 60, modifierFlags: [], modifierKeyCodes: [60])
         let manager = GlobalHotkeyManager(
-            asrService: ASRService(), primaryShortcuts: [], promptModeShortcut: shift,
-            commandModeShortcut: nil, rewriteModeShortcut: shift,
+            asrService: ASRService(),
+            primaryShortcuts: [],
+            promptModeShortcut: shift,
+            commandModeShortcut: nil,
+            rewriteModeShortcut: shift,
             promptShortcutAssignments: [(selection: .default, shortcut: command), (selection: .privateAI, shortcut: shift)],
-            promptModeShortcutEnabled: false, commandModeShortcutEnabled: false, rewriteModeShortcutEnabled: false,
+            promptModeShortcutEnabled: false,
+            commandModeShortcutEnabled: false,
+            rewriteModeShortcutEnabled: false,
             promptSelectionCallback: { selections.append($0) }
         )
         manager.setHotkeyMode(.toggle)
@@ -1241,12 +1305,18 @@ final class HotkeyShortcutTests: XCTestCase {
         var stops = 0
         let shortcut = HotkeyShortcut(keyCode: 55, modifierFlags: [], modifierKeyCodes: [55])
         let manager = GlobalHotkeyManager(
-            asrService: asr, primaryShortcuts: [shortcut], promptModeShortcut: shortcut,
-            commandModeShortcut: nil, rewriteModeShortcut: shortcut,
-            promptModeShortcutEnabled: false, commandModeShortcutEnabled: false, rewriteModeShortcutEnabled: false,
+            asrService: asr,
+            primaryShortcuts: [shortcut],
+            promptModeShortcut: shortcut,
+            commandModeShortcut: nil,
+            rewriteModeShortcut: shortcut,
+            promptModeShortcutEnabled: false,
+            commandModeShortcutEnabled: false,
+            rewriteModeShortcutEnabled: false,
             startRecordingCallback: { starts += 1; asr.isRunning = true },
             dictationModeCallback: { starts += 1; asr.isRunning = true },
-            stopAndProcessCallback: { _ in stops += 1 }, isDictateRecordingProvider: { isDictate }
+            stopAndProcessCallback: { _ in stops += 1 },
+            isDictateRecordingProvider: { isDictate }
         )
         manager.setHotkeyMode(.hold)
         _ = try manager.handleKeyEvent(type: .flagsChanged, event: self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 55, modifiers: .maskCommand))
@@ -1377,11 +1447,18 @@ final class HotkeyShortcutTests: XCTestCase {
         var stops = 0
         let shortcut = HotkeyShortcut(keyCode: 2, modifierFlags: [.control, .command])
         let manager = GlobalHotkeyManager(
-            asrService: asr, primaryShortcuts: [shortcut], promptModeShortcut: shortcut,
-            commandModeShortcut: nil, rewriteModeShortcut: shortcut,
-            promptModeShortcutEnabled: false, commandModeShortcutEnabled: false, rewriteModeShortcutEnabled: false,
-            startRecordingCallback: { asr.isRunning = true }, dictationModeCallback: { asr.isRunning = true },
-            stopAndProcessCallback: { _ in stops += 1; asr.isRunning = false }, isDictateRecordingProvider: { isDictate }
+            asrService: asr,
+            primaryShortcuts: [shortcut],
+            promptModeShortcut: shortcut,
+            commandModeShortcut: nil,
+            rewriteModeShortcut: shortcut,
+            promptModeShortcutEnabled: false,
+            commandModeShortcutEnabled: false,
+            rewriteModeShortcutEnabled: false,
+            startRecordingCallback: { asr.isRunning = true },
+            dictationModeCallback: { asr.isRunning = true },
+            stopAndProcessCallback: { _ in stops += 1; asr.isRunning = false },
+            isDictateRecordingProvider: { isDictate }
         )
         manager.setHotkeyMode(.hold)
         _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
@@ -1403,10 +1480,14 @@ final class HotkeyShortcutTests: XCTestCase {
         defer { asr.isRunning = false }
         var starts = 0
         var stops = 0
-        let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: {
-            starts += 1
-            await Task { @MainActor in asr.isRunning = true }.value
-        }, onStop: { stops += 1; asr.isRunning = false })
+        let manager = self.makePrimaryReleaseTestManager(
+            asr: asr,
+            onStart: {
+                starts += 1
+                await Task { @MainActor in asr.isRunning = true }.value
+            },
+            onStop: { stops += 1; asr.isRunning = false }
+        )
         for _ in 0..<2 {
             _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
             _ = try manager.handleKeyEvent(type: .keyUp, event: self.primaryReleaseTestEvent(type: .keyUp))
@@ -1494,12 +1575,18 @@ final class HotkeyShortcutTests: XCTestCase {
         let first = HotkeyShortcut(keyCode: 2, modifierFlags: .control)
         let second = HotkeyShortcut(keyCode: 3, modifierFlags: .control)
         let manager = GlobalHotkeyManager(
-            asrService: asr, primaryShortcuts: [], promptModeShortcut: first,
-            commandModeShortcut: nil, rewriteModeShortcut: first,
+            asrService: asr,
+            primaryShortcuts: [],
+            promptModeShortcut: first,
+            commandModeShortcut: nil,
+            rewriteModeShortcut: first,
             promptShortcutAssignments: [(selection: .default, shortcut: first), (selection: .privateAI, shortcut: second)],
-            promptModeShortcutEnabled: false, commandModeShortcutEnabled: false, rewriteModeShortcutEnabled: false,
+            promptModeShortcutEnabled: false,
+            commandModeShortcutEnabled: false,
+            rewriteModeShortcutEnabled: false,
             stopAndProcessCallback: { _ in stops += 1; asr.isRunning = false },
-            promptSelectionCallback: { _ in starts += 1; asr.isRunning = true }, isPromptModeRecordingProvider: { true }
+            promptSelectionCallback: { _ in starts += 1; asr.isRunning = true },
+            isPromptModeRecordingProvider: { true }
         )
         manager.setHotkeyMode(.hold)
         _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown, keyCode: 2, modifiers: .maskControl))
@@ -1530,19 +1617,23 @@ final class HotkeyShortcutTests: XCTestCase {
                 asr.isRunning = initiallyRunning
                 var starts = 0
                 var stops = 0
-                let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: {
-                    starts += 1
-                    await Task { @MainActor in
-                        await Task.yield()
-                        asr.isRunning = true
-                    }.value
-                }, onStop: {
-                    stops += 1
-                    await Task { @MainActor in
-                        await Task.yield()
-                        asr.isRunning = false
-                    }.value
-                })
+                let manager = self.makePrimaryReleaseTestManager(
+                    asr: asr,
+                    onStart: {
+                        starts += 1
+                        await Task { @MainActor in
+                            await Task.yield()
+                            asr.isRunning = true
+                        }.value
+                    },
+                    onStop: {
+                        stops += 1
+                        await Task { @MainActor in
+                            await Task.yield()
+                            asr.isRunning = false
+                        }.value
+                    }
+                )
                 for _ in 0..<taps {
                     _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
                     _ = try manager.handleKeyEvent(type: .keyUp, event: self.primaryReleaseTestEvent(type: .keyUp))
@@ -1621,10 +1712,15 @@ final class HotkeyShortcutTests: XCTestCase {
         let shortcut = HotkeyShortcut(keyCode: 2, modifierFlags: .control)
         var selections: [SettingsStore.DictationPromptSelection] = []
         let manager = GlobalHotkeyManager(
-            asrService: ASRService(), primaryShortcuts: [], promptModeShortcut: shortcut,
-            commandModeShortcut: nil, rewriteModeShortcut: shortcut,
+            asrService: ASRService(),
+            primaryShortcuts: [],
+            promptModeShortcut: shortcut,
+            commandModeShortcut: nil,
+            rewriteModeShortcut: shortcut,
             promptShortcutAssignments: [(selection: .default, shortcut: shortcut)],
-            promptModeShortcutEnabled: false, commandModeShortcutEnabled: false, rewriteModeShortcutEnabled: false,
+            promptModeShortcutEnabled: false,
+            commandModeShortcutEnabled: false,
+            rewriteModeShortcutEnabled: false,
             promptSelectionCallback: { selections.append($0) }
         )
         _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown, modifiers: .maskControl))
@@ -1649,14 +1745,20 @@ final class HotkeyShortcutTests: XCTestCase {
             var starts = 0
             var stops = 0
             let manager = GlobalHotkeyManager(
-                asrService: asr, primaryShortcuts: style ? [] : [keyboard, modifier], promptModeShortcut: keyboard,
-                commandModeShortcut: nil, rewriteModeShortcut: keyboard,
+                asrService: asr,
+                primaryShortcuts: style ? [] : [keyboard, modifier],
+                promptModeShortcut: keyboard,
+                commandModeShortcut: nil,
+                rewriteModeShortcut: keyboard,
                 promptShortcutAssignments: style ? [(selection: .default, shortcut: keyboard), (selection: .privateAI, shortcut: modifier)] : [],
-                promptModeShortcutEnabled: false, commandModeShortcutEnabled: false, rewriteModeShortcutEnabled: false,
+                promptModeShortcutEnabled: false,
+                commandModeShortcutEnabled: false,
+                rewriteModeShortcutEnabled: false,
                 startRecordingCallback: { starts += 1; asr.isRunning = true },
                 stopAndProcessCallback: { _ in stops += 1; asr.isRunning = false },
                 promptSelectionCallback: { _ in starts += 1; asr.isRunning = true },
-                isDictateRecordingProvider: { !style }, isPromptModeRecordingProvider: { style }
+                isDictateRecordingProvider: { !style },
+                isPromptModeRecordingProvider: { style }
             )
             manager.setHotkeyMode(.hold)
             _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown, modifiers: .maskControl))
@@ -1743,6 +1845,107 @@ final class HotkeyShortcutTests: XCTestCase {
             }
             XCTAssertEqual(starts, 1)
         }
+    }
+
+    @MainActor
+    func testCancelledOutputPolicySavesHistoryWithoutEditorOrDelivery() {
+        let route = ContentView.DictationOutputRoute.historyOnly
+        XCTAssertTrue(route.savesHistory)
+        XCTAssertFalse(route.deliversText)
+        XCTAssertFalse(route.publishesEditorResult)
+    }
+
+    @MainActor
+    func testNormalAndPracticeOutputPoliciesStayUnchanged() {
+        let normal = ContentView.DictationOutputRoute.normal
+        XCTAssertTrue(normal.savesHistory)
+        XCTAssertTrue(normal.deliversText)
+        XCTAssertTrue(normal.publishesEditorResult)
+        let practice = ContentView.DictationOutputRoute.onboardingSandbox
+        XCTAssertFalse(practice.savesHistory)
+        XCTAssertFalse(practice.deliversText)
+        XCTAssertTrue(practice.publishesEditorResult)
+    }
+
+    @MainActor
+    func testCancelCallbackOwnsAudioBeforeDiscardFallback() async throws {
+        let asr = ASRService()
+        asr.isRunning = true
+        defer { asr.isRunning = false }
+        var cancellations = 0
+        let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: {})
+        manager.setCancelCallback { cancellations += 1; return true }
+        let result = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown, keyCode: 53, modifiers: []))
+        XCTAssertNil(result)
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        XCTAssertEqual(cancellations, 1)
+        XCTAssertTrue(asr.isRunning, "The application must own stop/transcription; fallback must not discard its audio")
+    }
+
+    @MainActor
+    func testCancelClearsHeldOwnerWithoutStoppingApplicationRecovery() async throws {
+        let asr = ASRService()
+        defer { asr.isRunning = false }
+        var starts = 0
+        var stops = 0
+        let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: { starts += 1; asr.isRunning = true }, onStop: { stops += 1; asr.isRunning = false })
+        manager.setHotkeyMode(.hold)
+        manager.setCancelCallback { true }
+        _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        XCTAssertTrue(asr.isRunning)
+        _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown, keyCode: 53, modifiers: []))
+        let releaseEvent = try self.primaryReleaseTestEvent(type: .keyUp, modifiers: [])
+        let released = manager.handleKeyEvent(type: .keyUp, event: releaseEvent)
+        withExtendedLifetime(releaseEvent) {
+            XCTAssertNotNil(released, "Escape invalidates the old held owner")
+        }
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        XCTAssertEqual(stops, 0)
+        XCTAssertTrue(asr.isRunning, "The application-owned recovery must retain audio until transcription takes it")
+        asr.isRunning = false // Recovery finishes; the next real shortcut must still work.
+        _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        XCTAssertEqual(starts, 2)
+    }
+
+    @MainActor
+    func testRepeatedCancelDoesNotInvokeDiscardWhileRecoveryIsPending() async throws {
+        let asr = ASRService()
+        asr.isRunning = true
+        defer { asr.isRunning = false }
+        var recoveryQueued = false
+        var saves = 0
+        let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: {})
+        manager.setCancelCallback {
+            if !recoveryQueued { recoveryQueued = true; saves += 1 }
+            return true
+        }
+        for _ in 0..<5 {
+            XCTAssertNil(try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown, keyCode: 53, modifiers: [])))
+        }
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        XCTAssertEqual(saves, 1)
+        XCTAssertTrue(asr.isRunning)
+    }
+
+    @MainActor
+    func testIdleCancelPassesThroughWhenApplicationHasNothingToHandle() throws {
+        let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
+        manager.setCancelCallback { false }
+        let event = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: 53, modifiers: [])
+        let result = manager.handleKeyEvent(type: .keyDown, event: event)
+        withExtendedLifetime(event) { XCTAssertNotNil(result) }
     }
 
     @MainActor
