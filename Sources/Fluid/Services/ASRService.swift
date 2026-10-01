@@ -2880,12 +2880,7 @@ final class ASRService: ObservableObject {
                     attemptID: readinessAttemptID,
                     timeoutNanoseconds: self.firstPCMTimeoutNanoseconds
                 )
-                guard startGeneration == self.audioCaptureStartGeneration,
-                      self.isTerminating == false,
-                      self.isPronunciationTrainingStartCurrent
-                else {
-                    throw CancellationError()
-                }
+                try self.checkCaptureStartGeneration(startGeneration)
                 let routeStayedStable =
                     routeGenerationAtStart == self.audioRouteRecoveryGeneration &&
                     self.pendingAudioRouteRecovery == nil &&

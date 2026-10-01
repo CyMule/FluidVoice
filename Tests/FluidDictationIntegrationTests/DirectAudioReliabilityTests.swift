@@ -900,6 +900,40 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertEqual(result, .timedOut)
     }
 
+    @MainActor
+    func testReadyPCMDoesNotOverrideConsumerTaskCancellation() async {
+        let gate = AudioCaptureReadinessGate()
+        gate.arm(sessionID: 41, attemptID: 1)
+        gate.signalFirstPCM(sessionID: 41, attemptID: 1)
+        var resumeAfterReady: CheckedContinuation<Void, Never>?
+        let task = Task { @MainActor in
+            let result = await gate.wait(sessionID: 41, attemptID: 1, timeoutNanoseconds: 1_000_000)
+            XCTAssertEqual(result, .ready)
+            await withCheckedContinuation { resumeAfterReady = $0 }
+            do {
+                try Task.checkCancellation()
+                return true
+            } catch { return false }
+        }
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        XCTAssertNotNil(resumeAfterReady)
+        task.cancel()
+        resumeAfterReady?.resume()
+        let publishedCapture = await task.value
+        XCTAssertFalse(publishedCapture, "The capture consumer must check cancellation even after a ready result")
+    }
+
+    func testASRRechecksCaptureCancellationAfterFirstPCMWait() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/Fluid/Services/ASRService.swift"), encoding: .utf8)
+        let postWait = try XCTUnwrap(source.components(separatedBy: "let readiness = await self.audioCaptureReadinessGate.wait(").dropFirst().first)
+        let readinessBranch = try XCTUnwrap(postWait.range(of: "if readiness == .ready"))
+        let cancellationCheck = try XCTUnwrap(postWait.range(of: "try self.checkCaptureStartGeneration(startGeneration)"))
+        XCTAssertLessThan(cancellationCheck.lowerBound, readinessBranch.lowerBound, "Do not publish ready PCM before checking task cancellation")
+    }
+
     func testReadinessWaitRespondsPromptlyToTaskCancellation() async {
         let gate = AudioCaptureReadinessGate()
         gate.arm(sessionID: 41, attemptID: 1)

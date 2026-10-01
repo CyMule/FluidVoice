@@ -471,7 +471,7 @@ struct ContentView: View {
             .sheet(isPresented: self.$showsFluidIntelligenceDemo) {
                 FluidIntelligenceDemoView(
                     asr: self.asr,
-                    onStart: self.startRecording,
+                    onStart: { _ = self.startRecording() },
                     onStop: { await self.stopAndProcessTranscription() },
                     onCancel: { _ = self.handleCancelShortcut() },
                     onSetup: {
@@ -870,13 +870,18 @@ struct ContentView: View {
         }
 
         let keyCode = event.keyCode
-        if keyCode == 53, recordingTarget != .cancel {
+        if keyCode == 53, eventModifiers.isEmpty, recordingTarget != .cancel {
             DebugLogger.shared.debug("NSEvent monitor: Escape pressed, cancelling shortcut recording", source: "ContentView")
             self.clearShortcutRecordingMode()
             return nil
         }
 
-        let newShortcut = HotkeyShortcut(keyCode: keyCode, modifierFlags: self.pendingModifierFlags.union(eventModifiers))
+        let newShortcut = HotkeyShortcut(keyCode: keyCode, modifierFlags: eventModifiers)
+        if recordingTarget != .cancel, recordingTarget != .pasteLast, newShortcut.requiresModifierForRecording {
+            self.shortcutRecordingMessage = "\(newShortcut.displayString) needs a modifier key"
+            self.resetPendingShortcutState()
+            return nil
+        }
         DebugLogger.shared.debug("NSEvent monitor: Recording new shortcut: \(newShortcut.displayString)", source: "ContentView")
 
         if let recordingTarget,
@@ -909,7 +914,7 @@ struct ContentView: View {
             return event
         }
 
-        let newShortcut = HotkeyShortcut(mouseButton: event.buttonNumber, modifierFlags: self.pendingModifierFlags.union(eventModifiers))
+        let newShortcut = HotkeyShortcut(mouseButton: event.buttonNumber, modifierFlags: eventModifiers)
         DebugLogger.shared.debug("NSEvent monitor: Recording new mouse shortcut: \(newShortcut.displayString)", source: "ContentView")
 
         if newShortcut.isUnmodifiedLeftOrRightClick, let mouseButton = newShortcut.mouseButton {
@@ -1188,9 +1193,11 @@ struct ContentView: View {
         if self.isPromptModeShortcutEnabled {
             configuredShortcuts.append((.secondaryDictation, self.promptModeHotkeyShortcut))
         }
+        if self.isCommandModeShortcutEnabled, let commandModeHotkeyShortcut = self.commandModeHotkeyShortcut {
+            configuredShortcuts.append((.command, commandModeHotkeyShortcut))
+        }
         let optionalConfiguredShortcuts: [(ShortcutRecordingTarget, HotkeyShortcut?)] = [
             (.cancel, self.cancelRecordingHotkeyShortcut),
-            (.command, self.commandModeHotkeyShortcut),
             (.pasteLast, self.pasteLastTranscriptionHotkeyShortcut),
         ]
 
@@ -2146,7 +2153,7 @@ struct ContentView: View {
                 copyToClipboard: self.$copyToClipboard,
                 hotkeyManager: self.hotkeyManager,
                 menuBarManager: self.menuBarManager,
-                startRecording: self.startRecording,
+                startRecording: { _ = self.startRecording() },
                 refreshDevices: self.refreshDevices,
                 openAccessibilitySettings: self.openAccessibilitySettings,
                 restartApp: self.restartApp,
@@ -2160,7 +2167,7 @@ struct ContentView: View {
         RecordingView(
             appear: self.$appear,
             stopAndProcessTranscription: { await self.stopAndProcessTranscription() },
-            startRecording: self.startRecording
+            startRecording: { _ = self.startRecording() }
         )
     }
 
@@ -4460,10 +4467,10 @@ struct ContentView: View {
     }
 
     /// Capture app context at start to avoid mismatches if the user switches apps mid-session
-    private func startRecording() {
+    private func startRecording() -> Task<Void, Never>? {
         // Browsing the demo must not send dictation to a previously focused app.
-        guard !self.showsFluidIntelligenceDemo || (DictationPromptTestCoordinator.shared.isActive && !DictationPromptTestCoordinator.shared.isProcessing) else { return }
-        guard !self.presentExclusiveActivityBlockIfNeeded() else { return }
+        guard !self.showsFluidIntelligenceDemo || (DictationPromptTestCoordinator.shared.isActive && !DictationPromptTestCoordinator.shared.isProcessing) else { return nil }
+        guard !self.presentExclusiveActivityBlockIfNeeded() else { return nil }
         let model = SettingsStore.shared.selectedSpeechModel
         DebugLogger.shared.info(
             "ContentView: startRecording() for model=\(model.displayName), supportsStreaming=\(model.supportsStreaming)",
@@ -4471,7 +4478,7 @@ struct ContentView: View {
         )
         guard !self.asr.isRunningOrStarting else {
             DebugLogger.shared.debug("ContentView: start ignored because capture is already active", source: "ContentView")
-            return
+            return nil
         }
         self.advanceOverlayLifecycle()
         self.setActiveRecordingMode(.dictate)
@@ -4493,7 +4500,12 @@ struct ContentView: View {
             )
         }
 
-        Task {
+        let captureOverlayLifecycleID = self.overlayLifecycleID
+        let captureTask = Task {
+            guard !Task.isCancelled else {
+                self.clearCancelledCaptureStart(lifecycleID: captureOverlayLifecycleID, mode: .dictate)
+                return
+            }
             let startOutcome = await self.asr.start(onCaptureStarted: {
                 if shouldPlayStartSound {
                     TranscriptionSoundPlayer.shared.playStartSound()
@@ -4506,6 +4518,10 @@ struct ContentView: View {
                     source: "AppBenchmark"
                 )
             })
+            guard !Task.isCancelled else {
+                self.clearCancelledCaptureStart(lifecycleID: captureOverlayLifecycleID, mode: .dictate)
+                return
+            }
             if startOutcome == .failed {
                 self.menuBarManager.hideRecordingOverlayImmediately(reason: "asr_start_failed")
             }
@@ -4523,6 +4539,26 @@ struct ContentView: View {
                 DebugLogger.shared.error("Failed to pre-load model: \(error)", source: "ContentView")
             }
         }
+        return captureTask
+    }
+
+    private func awaitCaptureStart(_ captureTask: Task<Void, Never>?) async {
+        guard let captureTask else { return }
+        await withTaskCancellationHandler {
+            await captureTask.value
+        } onCancel: {
+            captureTask.cancel()
+        }
+    }
+
+    private func clearCancelledCaptureStart(lifecycleID: UInt64, mode: ActiveRecordingMode) {
+        guard self.overlayLifecycleID == lifecycleID,
+              !self.asr.isRunningOrStarting,
+              self.activeRecordingMode == mode || self.activeRecordingMode == .none
+        else { return }
+        self.cancelPrewarmDictationIfNeeded()
+        self.clearActiveRecordingMode()
+        self.menuBarManager.hideRecordingOverlayImmediately(reason: "capture_start_cancelled")
     }
 
     private func presentExclusiveActivityBlockIfNeeded() -> Bool {
@@ -4728,7 +4764,7 @@ struct ContentView: View {
             rewriteModeShortcutEnabled: self.isRewriteModeShortcutEnabled,
             startRecordingCallback: {
                 DebugLogger.shared.debug("ContentView: startRecordingCallback invoked by hotkey", source: "ContentView")
-                self.startRecording()
+                await self.awaitCaptureStart(self.startRecording())
             },
             dictationModeCallback: {
                 DebugLogger.shared.info("Dictate mode triggered", source: "ContentView")
@@ -4736,7 +4772,7 @@ struct ContentView: View {
                     "ContentView: selected model for dictate hotkey=\(SettingsStore.shared.selectedSpeechModel.displayName)",
                     source: "ContentView"
                 )
-                self.beginDictationRecording(for: .primary, mode: .dictate)
+                await self.awaitCaptureStart(self.beginDictationRecording(for: .primary, mode: .dictate))
             },
             stopAndProcessCallback: { toggleStopRequestedAt in
                 let route = self.currentDictationOutputRouteForHotkeyStop()
@@ -4748,11 +4784,11 @@ struct ContentView: View {
             },
             promptModeCallback: {
                 DebugLogger.shared.info("Prompt mode triggered", source: "ContentView")
-                self.beginDictationRecording(for: .secondary, mode: .promptMode)
+                await self.awaitCaptureStart(self.beginDictationRecording(for: .secondary, mode: .promptMode))
             },
             promptSelectionCallback: { selection in
                 DebugLogger.shared.info("Prompt selection shortcut triggered", source: "ContentView")
-                self.beginDictationRecording(for: selection, mode: .promptMode)
+                await self.awaitCaptureStart(self.beginDictationRecording(for: selection, mode: .promptMode))
             },
             commandModeCallback: {
                 guard !self.presentExclusiveActivityBlockIfNeeded() else { return }
@@ -4774,17 +4810,27 @@ struct ContentView: View {
                     "Starting voice recording for command",
                     source: "ContentView"
                 )
-                Task {
+                let captureOverlayLifecycleID = self.overlayLifecycleID
+                let captureTask = Task {
+                    guard !Task.isCancelled else {
+                        self.clearCancelledCaptureStart(lifecycleID: captureOverlayLifecycleID, mode: .command)
+                        return
+                    }
                     let startOutcome = await self.asr.start(onCaptureStarted: {
                         TranscriptionSoundPlayer.shared.playStartSound()
                         self.appBench("overlay_phase phase=recording trigger=first_pcm mode=command")
                     })
+                    guard !Task.isCancelled else {
+                        self.clearCancelledCaptureStart(lifecycleID: captureOverlayLifecycleID, mode: .command)
+                        return
+                    }
                     if startOutcome == .failed {
                         self.menuBarManager.hideRecordingOverlayImmediately(
                             reason: "command_asr_start_failed"
                         )
                     }
                 }
+                await self.awaitCaptureStart(captureTask)
             },
             rewriteModeCallback: {
                 guard !self.presentExclusiveActivityBlockIfNeeded() else { return }
@@ -4820,17 +4866,27 @@ struct ContentView: View {
 
                 // Start recording immediately for the edit instruction
                 DebugLogger.shared.info("Starting voice recording for edit mode", source: "ContentView")
-                Task {
+                let captureOverlayLifecycleID = self.overlayLifecycleID
+                let captureTask = Task {
+                    guard !Task.isCancelled else {
+                        self.clearCancelledCaptureStart(lifecycleID: captureOverlayLifecycleID, mode: .edit)
+                        return
+                    }
                     let startOutcome = await self.asr.start(onCaptureStarted: {
                         TranscriptionSoundPlayer.shared.playStartSound()
                         self.appBench("overlay_phase phase=recording trigger=first_pcm mode=edit")
                     })
+                    guard !Task.isCancelled else {
+                        self.clearCancelledCaptureStart(lifecycleID: captureOverlayLifecycleID, mode: .edit)
+                        return
+                    }
                     if startOutcome == .failed {
                         self.menuBarManager.hideRecordingOverlayImmediately(
                             reason: "edit_asr_start_failed"
                         )
                     }
                 }
+                await self.awaitCaptureStart(captureTask)
             },
             isDictateRecordingProvider: {
                 self.activeRecordingMode == .dictate
@@ -4846,6 +4902,9 @@ struct ContentView: View {
             },
             isShortcutCaptureActiveProvider: {
                 self.isRecordingAnyShortcutCapture
+            },
+            shortcutCaptureHandler: {
+                self.handleShortcutCaptureEvent($0)
             }
         )
         self.hotkeyManager?.registerDebugToggleTriggerIfEnabled()
@@ -5146,8 +5205,8 @@ extension ContentView {
         for slot: SettingsStore.DictationShortcutSlot,
         mode: ActiveRecordingMode,
         startMethod: AnalyticsOnboardingTryoutStartMethod = .hotkey
-    ) {
-        guard !self.presentExclusiveActivityBlockIfNeeded() else { return }
+    ) -> Task<Void, Never>? {
+        guard !self.presentExclusiveActivityBlockIfNeeded() else { return nil }
         DebugLogger.shared.debug("Begin dictation recording for slot \(slot.rawValue)", source: "ContentView")
         DebugLogger.shared.debug("CLOSE_DETAIL nextStartRequested uptime=\(ProcessInfo.processInfo.systemUptime)", source: "StopTiming")
         self.appBench("begin_recording slot=\(slot.rawValue) mode=\(mode.rawValue)")
@@ -5164,7 +5223,7 @@ extension ContentView {
 
         guard !self.asr.isRunningOrStarting else {
             self.appBench("asr_start_skipped reason=already_running_or_starting")
-            return
+            return nil
         }
         let isOnboardingTryout = self.isOnboardingVoicePlaygroundStepActive && mode == .dictate
         if isOnboardingTryout {
@@ -5178,7 +5237,12 @@ extension ContentView {
             self.appBench("overlay_mode_requested mode=Dictation")
             self.appBench("overlay_phase phase=connecting")
         }
-        Task {
+        let captureOverlayLifecycleID = self.overlayLifecycleID
+        return Task {
+            guard !Task.isCancelled else {
+                self.clearCancelledCaptureStart(lifecycleID: captureOverlayLifecycleID, mode: mode)
+                return
+            }
             let asrStartStartedAt = ProcessInfo.processInfo.systemUptime
             DebugLogger.shared.benchmark("APP_BENCH", message: "asr_start_call", source: "AppBenchmark")
             let startOutcome = await self.asr.start(onCaptureStarted: {
@@ -5189,6 +5253,10 @@ extension ContentView {
                 self.prewarmPrivateAIDictationIfNeeded(for: slot)
                 self.appBench("overlay_phase phase=recording trigger=first_pcm")
             })
+            guard !Task.isCancelled else {
+                self.clearCancelledCaptureStart(lifecycleID: captureOverlayLifecycleID, mode: mode)
+                return
+            }
             if startOutcome == .failed {
                 self.menuBarManager.hideRecordingOverlayImmediately(reason: "asr_start_failed")
                 if isOnboardingTryout {
@@ -5206,10 +5274,10 @@ extension ContentView {
         }
     }
 
-    private func beginDictationRecording(for selection: SettingsStore.DictationPromptSelection, mode: ActiveRecordingMode) {
+    private func beginDictationRecording(for selection: SettingsStore.DictationPromptSelection, mode: ActiveRecordingMode) -> Task<Void, Never>? {
         let settings = SettingsStore.shared
         settings.setDictationPromptSelection(selection, for: .secondary)
-        self.beginDictationRecording(for: .secondary, mode: mode)
+        return self.beginDictationRecording(for: .secondary, mode: mode)
     }
 
     private func benchmarkLoadAverage() -> String {
