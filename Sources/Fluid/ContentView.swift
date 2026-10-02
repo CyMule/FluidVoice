@@ -275,7 +275,7 @@ struct ContentView: View {
     @State private var hotkeyManager: GlobalHotkeyManager? = nil
     @State private var hotkeyManagerInitialized: Bool = false
     @State private var processingDictationLifecycleID: UInt64?
-    @State private var processingAllowsHistoryCancellation = false
+    @State private var pendingVoiceCommandLifecycleID: UInt64?
     @State private var cancelledOutputLifecycleID: UInt64?
     @State private var isSavingCancelledRecording = false
 
@@ -2927,12 +2927,9 @@ struct ContentView: View {
         guard self.processingDictationLifecycleID == nil else { return }
         let outputLifecycleID = self.overlayLifecycleID
         self.processingDictationLifecycleID = outputLifecycleID
-        self.processingAllowsHistoryCancellation = self.activeRecordingMode != .edit && self.activeRecordingMode != .command
-            && !self.isRecordingForRewrite && !self.isRecordingForCommand
         defer {
             if self.processingDictationLifecycleID == outputLifecycleID {
                 self.processingDictationLifecycleID = nil
-                self.processingAllowsHistoryCancellation = false
             }
         }
         var closeTrace = OverlayCloseTrace("content.stopCallback")
@@ -3055,6 +3052,10 @@ struct ContentView: View {
 
         // If this was a rewrite recording, process the rewrite instead of typing
         if wasRewriteMode {
+            guard !cancelledAtASRStop else {
+                self.rewriteModeService.clearState()
+                return
+            }
             DebugLogger.shared.info("Processing rewrite with instruction: \(transcribedText)", source: "ContentView")
             AnalyticsService.shared.recordModelUsage(
                 role: .transcription,
@@ -3062,19 +3063,20 @@ struct ContentView: View {
                 descriptor: self.settings.selectedSpeechModel.analyticsDescriptor
             )
             let appInfo = self.recordingAppInfo ?? self.getCurrentAppInfo()
-            await self.processRewriteWithVoiceInstruction(transcribedText, appInfo: appInfo)
+            await self.processRewriteWithVoiceInstruction(transcribedText, appInfo: appInfo, lifecycleID: expectedOverlayLifecycleID)
             return
         }
 
         // If this was a command recording, process the command
         if wasCommandMode {
+            guard !cancelledAtASRStop else { return }
             DebugLogger.shared.info("Processing command: \(transcribedText)", source: "ContentView")
             AnalyticsService.shared.recordModelUsage(
                 role: .transcription,
                 mode: .command,
                 descriptor: self.settings.selectedSpeechModel.analyticsDescriptor
             )
-            await self.processCommandWithVoice(transcribedText)
+            await self.processCommandWithVoice(transcribedText, lifecycleID: expectedOverlayLifecycleID)
             return
         }
 
@@ -4385,8 +4387,14 @@ struct ContentView: View {
 
     private func processRewriteWithVoiceInstruction(
         _ instruction: String,
-        appInfo: (name: String, bundleId: String, windowTitle: String)
+        appInfo: (name: String, bundleId: String, windowTitle: String),
+        lifecycleID: UInt64
     ) async {
+        let isOutputValid: @MainActor () -> Bool = { self.overlayLifecycleID == lifecycleID && self.cancelledOutputLifecycleID != lifecycleID }
+        guard isOutputValid() else { return }
+        defer {
+            if !isOutputValid() { self.rewriteModeService.clearState() }
+        }
         self.rewriteModeService.setPromptAppBundleID(appInfo.bundleId)
         let hasOriginalText = !self.rewriteModeService.originalText.isEmpty
         DebugLogger.shared.info(
@@ -4401,6 +4409,7 @@ struct ContentView: View {
         // - With originalText: rewrites existing text based on instruction
         // - Without originalText: improves/refines the spoken text
         await self.rewriteModeService.processRewriteRequest(instruction)
+        guard isOutputValid() else { return }
 
         // If rewrite was successful, type the result
         if !self.rewriteModeService.rewrittenText.isEmpty {
@@ -4409,7 +4418,8 @@ struct ContentView: View {
             // Type the rewritten text
             let typingTarget = self.resolveTypingTargetPID()
             if typingTarget.shouldRestoreOriginalFocus {
-                guard await self.prepareRecordingTargetForDelivery(self.rewriteModeService.rewrittenText, keepBackup: SettingsStore.shared.copyTranscriptionToClipboard) else {
+                guard await self.prepareRecordingTargetForDelivery(self.rewriteModeService.rewrittenText, keepBackup: SettingsStore.shared.copyTranscriptionToClipboard, isOutputValid: isOutputValid) else {
+                    guard isOutputValid() else { return }
                     self.showTextDeliveryFailure(
                         .targetRestoreFailed,
                         transcript: self.rewriteModeService.rewrittenText
@@ -4420,8 +4430,10 @@ struct ContentView: View {
             let deliveryResult = await self.asr.typeTextToActiveField(
                 self.rewriteModeService.rewrittenText,
                 preferredTargetPID: typingTarget.pid,
-                preserveTranscriptOnClipboard: SettingsStore.shared.copyTranscriptionToClipboard
+                preserveTranscriptOnClipboard: SettingsStore.shared.copyTranscriptionToClipboard,
+                isOutputValid: isOutputValid
             )
+            guard isOutputValid() else { return }
             if case let .recoverableFailure(failure) = deliveryResult {
                 self.showTextDeliveryFailure(failure, transcript: self.rewriteModeService.rewrittenText)
                 return
@@ -4520,7 +4532,9 @@ struct ContentView: View {
 
     // MARK: - Command Mode Voice Processing
 
-    private func processCommandWithVoice(_ command: String) async {
+    private func processCommandWithVoice(_ command: String, lifecycleID: UInt64) async {
+        let isOutputValid: @MainActor () -> Bool = { self.overlayLifecycleID == lifecycleID && self.cancelledOutputLifecycleID != lifecycleID }
+        guard isOutputValid() else { return }
         DebugLogger.shared.info("Processing voice command: '\(command)'", source: "ContentView")
 
         // Show processing animation
@@ -4528,7 +4542,9 @@ struct ContentView: View {
 
         // Process the command through CommandModeService
         // This stores the conversation history and executes any terminal commands
-        await self.commandModeService.processUserCommand(command, notifyInvalidRequest: true)
+        await self.commandModeService.processUserCommand(command, notifyInvalidRequest: true, isOutputValid: isOutputValid)
+        guard isOutputValid() else { return }
+        self.pendingVoiceCommandLifecycleID = self.commandModeService.pendingCommand == nil ? nil : lifecycleID
 
         // Hide processing animation
         self.menuBarManager.setProcessing(false)
@@ -5039,12 +5055,16 @@ struct ContentView: View {
             handled = true
         }
 
+        if let lifecycleID = self.pendingVoiceCommandLifecycleID {
+            self.cancelledOutputLifecycleID = lifecycleID
+            self.pendingVoiceCommandLifecycleID = nil
+            handled = self.commandModeService.cancelInvalidPendingCommand() || handled
+        }
+
         if let lifecycleID = self.processingDictationLifecycleID {
             // A stop already owns the audio; suppress its pending output without stopping again.
-            if self.processingAllowsHistoryCancellation {
-                self.cancelledOutputLifecycleID = lifecycleID
-                handled = true
-            }
+            self.cancelledOutputLifecycleID = lifecycleID
+            handled = true
         } else if self.asr.isRunningOrStarting {
             let preservesHistory = self.settings.saveTranscriptionHistory && self.asr.isRunning && !self.asr.isDictionaryTrainingCaptureActive
                 && (self.activeRecordingMode == .dictate || self.activeRecordingMode == .promptMode)
@@ -5070,6 +5090,9 @@ struct ContentView: View {
                     if isOnboardingTryout {
                         AnalyticsService.shared.recordOnboardingTryoutAttemptResult(outcome: .cancelled)
                     }
+                }
+                if self.activeRecordingMode == .edit || self.isRecordingForRewrite {
+                    self.rewriteModeService.clearState()
                 }
                 self.clearActiveRecordingMode()
             }

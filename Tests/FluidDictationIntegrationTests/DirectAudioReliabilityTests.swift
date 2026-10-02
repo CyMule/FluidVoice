@@ -976,23 +976,28 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertTrue(cancel.contains("self.stopSpokenSendVoiceActivityMonitoring()"))
     }
 
-    func testHistoryRecoveryKeepsEditAndCommandOutsideDictationCancellation() throws {
+    func testEscapeCancelsVoiceEditAndCommandWithoutAddingThemToDictationHistory() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)
-        XCTAssertTrue(source.contains("self.processingAllowsHistoryCancellation = self.activeRecordingMode != .edit && self.activeRecordingMode != .command"))
-        XCTAssertTrue(source.contains("self.processingAllowsHistoryCancellation = false"))
+        XCTAssertFalse(source.contains("processingAllowsHistoryCancellation"))
+        XCTAssertTrue(source.contains("if wasRewriteMode {\n            guard !cancelledAtASRStop else {\n                self.rewriteModeService.clearState()"))
+        XCTAssertTrue(source.contains("if wasCommandMode {\n            guard !cancelledAtASRStop else { return }"))
         let start = try XCTUnwrap(source.range(of: "private func handleCancelShortcutResult("))
         let end = try XCTUnwrap(source.range(of: "// MARK: - Model Management Helpers", range: start.upperBound..<source.endIndex))
         let cancel = String(source[start.lowerBound..<end.lowerBound])
-        XCTAssertTrue(cancel.contains("if self.processingAllowsHistoryCancellation {"))
+        XCTAssertTrue(cancel.contains("self.cancelledOutputLifecycleID = lifecycleID"))
         XCTAssertTrue(cancel.contains("(self.activeRecordingMode == .dictate || self.activeRecordingMode == .promptMode)"))
         XCTAssertTrue(cancel.contains("!self.isRecordingForRewrite && !self.isRecordingForCommand"))
         let edit = try XCTUnwrap(source.components(separatedBy: "private func processRewriteWithVoiceInstruction(").last?.components(separatedBy: "private func setActiveRecordingMode(").first)
-        XCTAssertFalse(edit.contains("cancelledOutputLifecycleID"))
-        XCTAssertFalse(edit.contains("isOutputValid:"))
+        XCTAssertTrue(edit.contains("self.cancelledOutputLifecycleID != lifecycleID"))
+        XCTAssertEqual(edit.components(separatedBy: "isOutputValid: isOutputValid").count - 1, 2)
+        XCTAssertTrue(edit.contains("if !isOutputValid() { self.rewriteModeService.clearState() }"))
+        XCTAssertTrue(edit.contains("await self.rewriteModeService.processRewriteRequest(instruction)\n        guard isOutputValid() else { return }"))
         let command = try XCTUnwrap(source.components(separatedBy: "private func processCommandWithVoice(").last?.components(separatedBy: "/// Capture app context").first)
-        XCTAssertFalse(command.contains("isOutputValid:"))
-        XCTAssertFalse(command.contains("cancelledOutputLifecycleID"))
+        XCTAssertTrue(command.contains("processUserCommand(command, notifyInvalidRequest: true, isOutputValid: isOutputValid)"))
+        XCTAssertTrue(command.contains("self.overlayLifecycleID == lifecycleID && self.cancelledOutputLifecycleID != lifecycleID"))
+        XCTAssertTrue(cancel.contains("self.commandModeService.cancelInvalidPendingCommand()"))
+        XCTAssertTrue(command.contains("self.pendingVoiceCommandLifecycleID = self.commandModeService.pendingCommand == nil ? nil : lifecycleID"))
     }
 
     func testCancelledProcessingCannotPublishDelayedOverlayOrPracticeResult() throws {
