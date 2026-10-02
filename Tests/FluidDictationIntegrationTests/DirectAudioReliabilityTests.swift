@@ -1000,6 +1000,18 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertTrue(command.contains("self.pendingVoiceCommandLifecycleID = self.commandModeService.pendingCommand == nil ? nil : lifecycleID"))
     }
 
+    func testCommandFollowUpAcceptanceReachesNotchWithoutDroppingDraft() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)
+        XCTAssertTrue(source.contains("let accepted = await commandModeService.processFollowUpCommand(text)"))
+        XCTAssertTrue(source.contains("if !accepted, commandModeService.pendingCommand != nil"))
+        XCTAssertTrue(source.contains("self.asr.errorTitle = \"Command Awaiting Approval\""))
+        let overlay = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/Services/NotchOverlayManager.swift"), encoding: .utf8)
+        XCTAssertTrue(overlay.contains("return await self.onCommandFollowUp?(text) ?? false"))
+        let command = try XCTUnwrap(source.components(separatedBy: "private func processCommandWithVoice(").last?.components(separatedBy: "/// Capture app context").first)
+        XCTAssertTrue(command.contains("guard isOutputValid() else {\n            self.commandModeService.cancelInvalidPendingCommand()"))
+    }
+
     func testCancelledProcessingCannotPublishDelayedOverlayOrPracticeResult() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)

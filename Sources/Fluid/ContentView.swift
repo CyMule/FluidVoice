@@ -761,8 +761,14 @@ struct ContentView: View {
         }
 
         NotchOverlayManager.shared.onCommandFollowUp = { [weak commandModeService] text in
-            guard NotchOverlayManager.shared.allowsCommandNotchActions else { return }
-            await commandModeService?.processFollowUpCommand(text)
+            guard NotchOverlayManager.shared.allowsCommandNotchActions, let commandModeService else { return false }
+            let accepted = await commandModeService.processFollowUpCommand(text)
+            if !accepted, commandModeService.pendingCommand != nil {
+                self.asr.errorTitle = "Command Awaiting Approval"
+                self.asr.errorMessage = "Approve or cancel the pending command before sending a follow-up. Your text has been kept."
+                self.asr.showError = true
+            }
+            return accepted
         }
 
         NotchOverlayManager.shared.onNewChat = { [weak commandModeService] in
@@ -4543,7 +4549,10 @@ struct ContentView: View {
         // Process the command through CommandModeService
         // This stores the conversation history and executes any terminal commands
         await self.commandModeService.processUserCommand(command, notifyInvalidRequest: true, isOutputValid: isOutputValid)
-        guard isOutputValid() else { return }
+        guard isOutputValid() else {
+            self.commandModeService.cancelInvalidPendingCommand()
+            return
+        }
         self.pendingVoiceCommandLifecycleID = self.commandModeService.pendingCommand == nil ? nil : lifecycleID
 
         // Hide processing animation

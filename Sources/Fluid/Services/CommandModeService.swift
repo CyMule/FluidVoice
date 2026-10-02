@@ -412,16 +412,17 @@ final class CommandModeService: ObservableObject {
     }
 
     /// Process follow-up command from notch input
-    func processFollowUpCommand(_ text: String) async {
-        guard !self.isProcessing, self.pendingCommand == nil else { return }
+    @discardableResult
+    func processFollowUpCommand(_ text: String) async -> Bool {
+        guard !self.isProcessing, self.pendingCommand == nil else { return false }
         self.pendingVoiceCommandCancellation = nil
         guard let summaryActivity = MeetingSummaryActivityCoordinator.shared.beginProcessing() else {
             MeetingSummaryActivityCoordinator.presentBusyError()
-            return
+            return false
         }
         defer { MeetingSummaryActivityCoordinator.shared.endProcessing(summaryActivity) }
 
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
 
         AnalyticsService.shared.recordUsage(
             mode: .command,
@@ -443,6 +444,7 @@ final class CommandModeService: ObservableObject {
         }
 
         await self.processNextTurn()
+        return true
     }
 
     /// Execute pending command (after user confirmation)

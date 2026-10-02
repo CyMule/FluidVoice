@@ -184,6 +184,38 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
     func reset() { self.configs = []; self.responses = []; self.delay = true; self.delayOnCallNumber = nil; self.pending = nil }
 }
 
+@MainActor final class CommandMenuDouble {
+    var updates: [Bool] = []
+    func setProcessing(_ value: Bool) { self.updates.append(value) }
+}
+
+@MainActor final class CommandBoundaryDouble {
+    let service: CommandModeService
+    var afterRequest: (() -> Void)?
+    var pendingCommand: CommandModeService.PendingCommand? { self.service.pendingCommand }
+    init(_ service: CommandModeService) { self.service = service }
+    func processUserCommand(_ text: String, notifyInvalidRequest: Bool, isOutputValid: @escaping @MainActor () -> Bool) async {
+        await self.service.processUserCommand(text, notifyInvalidRequest: notifyInvalidRequest, isOutputValid: isOutputValid)
+        self.afterRequest?()
+    }
+
+    @discardableResult func cancelInvalidPendingCommand() -> Bool { self.service.cancelInvalidPendingCommand() }
+}
+
+@MainActor final class VoiceCommandOwner {
+    var overlayLifecycleID: UInt64 = 7
+    var cancelledOutputLifecycleID: UInt64?
+    var pendingVoiceCommandLifecycleID: UInt64?
+    let commandModeService: CommandBoundaryDouble
+    let menuBarManager = CommandMenuDouble()
+    init(_ service: CommandModeService) { self.commandModeService = CommandBoundaryDouble(service) }
+}
+
+@MainActor final class NotchInputOwner {
+    var inputText = ""
+    var onSubmit: (String) async -> Bool = { _ in false }
+}
+
 @main @MainActor enum CommandCancellationTests {
     static var checks = 0
     static func check(_ condition: Bool, _ message: String) {
@@ -228,6 +260,8 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
         await self.cancelVoiceConfirmation(cancelThroughEscape: false)
         await self.cancelVoiceConfirmationAfterCompletedTool()
         await self.confirmedVoiceDoesNotOwnLaterTypedConfirmation()
+        await self.voiceConfirmationCancelledAtCallerContinuation()
+        await self.notchInputClearsOnlyAcceptedText()
         await self.invalidRequestDoesNothing()
         self.check(MeetingSummaryActivityCoordinator.busyErrors == 0, "A canceled request left processing locked")
         print("Command cancellation: \(self.checks) checks passed (production agent loop, streaming callbacks, real in-memory chat store)")
@@ -247,7 +281,8 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
         let writes = UserDefaults.standard.writes
         // Every API entry must reject another command while the voice request awaits.
         await service.processUserCommand("interleaved typed command")
-        await service.processFollowUpCommand("interleaved follow-up")
+        let accepted = await service.processFollowUpCommand("interleaved follow-up")
+        self.check(!accepted, "Blocked follow-up falsely reported acceptance")
         await service.confirmAndExecute()
         self.check(LLMClient.shared.configs.count == 1 && service.conversationHistory.count == messages.count + 1, "Another entry point interleaved with canceled request cleanup")
         valid = false
@@ -402,7 +437,8 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
     static func validFollowUpAndConfirmationStillWork() async {
         let followUp = self.fixture()
         LLMClient.shared.delay = false
-        await followUp.processFollowUpCommand("typed follow-up")
+        let accepted = await followUp.processFollowUpCommand("typed follow-up")
+        self.check(accepted, "Normal follow-up was not accepted")
         self.check(followUp.conversationHistory.map(\.role) == [.user, .assistant] && !followUp.isProcessing, "Default follow-up stopped working")
         self.check(ChatHistoryStore.shared.currentSession?.messages.last?.content == "Done", "Default follow-up failed to persist")
 
@@ -432,7 +468,8 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
         self.check(service.pendingCommand != nil && TerminalService.executed.isEmpty && !service.isProcessing, "Voice request did not defer for confirmation")
         let count = service.conversationHistory.count
         await service.processUserCommand("interleaved typed request")
-        await service.processFollowUpCommand("interleaved follow-up")
+        let accepted = await service.processFollowUpCommand("interleaved follow-up")
+        self.check(!accepted, "Blocked follow-up falsely reported acceptance")
         self.check(service.conversationHistory.count == count && LLMClient.shared.configs.count == 1, "Another request replaced pending voice ownership")
         valid = false
         if cancelThroughEscape {
@@ -481,6 +518,58 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
         self.check(!service.cancelInvalidPendingCommand() && service.pendingCommand != nil, "Stale voice validity canceled a later typed confirmation with the same tool ID")
         await service.confirmAndExecute()
         self.check(TerminalService.executed.count == 2 && service.pendingCommand == nil, "Later typed confirmation lost its normal behavior")
+    }
+
+    static func voiceConfirmationCancelledAtCallerContinuation() async {
+        for cancel in [true, false] {
+            let service = self.fixture()
+            SettingsStore.shared.commandModeConfirmBeforeExecute = true
+            LLMClient.shared.delay = false
+            LLMClient.shared.responses = [self.destructiveResponse]
+            let owner = VoiceCommandOwner(service)
+            if cancel {
+                owner.commandModeService.afterRequest = { owner.cancelledOutputLifecycleID = 7 }
+            }
+            await owner.processCommandWithVoice("voice awaiting approval", lifecycleID: 7)
+            self.check(TerminalService.executed.isEmpty, "Voice continuation dispatched without approval")
+            if cancel {
+                self.check(service.pendingCommand == nil && service.conversationHistory.isEmpty, "Escape at caller continuation left hidden confirmation or intent")
+                self.check(owner.pendingVoiceCommandLifecycleID == nil && owner.menuBarManager.updates == [true], "Canceled continuation published pending owner or late UI")
+                await service.processUserCommand("next typed request")
+                self.check(service.conversationHistory.last?.content == "Done", "Race cleanup left future commands blocked")
+            } else {
+                self.check(service.pendingCommand != nil && owner.pendingVoiceCommandLifecycleID == 7, "Valid voice confirmation lost ownership")
+                self.check(owner.menuBarManager.updates == [true, false], "Valid continuation failed to finish processing UI")
+            }
+        }
+    }
+
+    static func notchInputClearsOnlyAcceptedText() async {
+        for accepted in [true, false] {
+            for editsDraft in [true, false] {
+                let owner = NotchInputOwner()
+                owner.inputText = "follow-up"
+                var resume: CheckedContinuation<Bool, Never>?
+                var returned = false
+                owner.onSubmit = { text in
+                    self.check(text == "follow-up", "Notch submitted the wrong draft")
+                    let result = await withCheckedContinuation { resume = $0 }
+                    returned = true
+                    return result
+                }
+                owner.submitFollowUp()
+                await self.waitFor { resume != nil }
+                self.check(owner.inputText == "follow-up", "Notch erased text before acceptance")
+                if editsDraft { owner.inputText = "new draft" }
+                resume?.resume(returning: accepted)
+                await self.waitFor { returned }
+                for _ in 0..<10 {
+                    await Task.yield()
+                }
+                let expected = editsDraft ? "new draft" : (accepted ? "" : "follow-up")
+                self.check(owner.inputText == expected, "Notch lost rejected or newly edited text")
+            }
+        }
     }
 
     static func invalidRequestDoesNothing() async {
