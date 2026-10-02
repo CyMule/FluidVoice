@@ -527,6 +527,17 @@ final class TypingServiceTransientPasteboardTests: XCTestCase {
         XCTAssertEqual(attempts, 2)
     }
 
+    func testAXSelectionReplacementNeverErasesSelectionBeforeInsertion() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/Services/TypingService.swift"), encoding: .utf8)
+        let start = try XCTUnwrap(source.range(of: "private nonisolated func setTextViaSelection("))
+        let end = try XCTUnwrap(source.range(of: "private nonisolated func insertTextAtInsertionPoint", range: start.upperBound..<source.endIndex))
+        let selection = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertEqual(selection.components(separatedBy: "AXUIElementSetAttributeValue(").count - 1, 1, "Selection replacement must be a single committed write")
+        XCTAssertFalse(selection.contains("\"\" as CFString"), "Never delete the selection before the cancel guard")
+        XCTAssertTrue(selection.contains("guard isOutputValid() else { return false }\n        let result = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, cfText)"))
+    }
+
     func testDirectFallbacksAndAXWritesForwardAndRecheckOutputValidity() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

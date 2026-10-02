@@ -358,8 +358,7 @@ final class CommandModeService: ObservableObject {
     }
 
     /// Process user voice/text command
-    func processUserCommand(_ text: String, notifyInvalidRequest: Bool = false, isOutputValid: @escaping @MainActor () -> Bool = { true }) async {
-        guard isOutputValid() else { return }
+    func processUserCommand(_ text: String, notifyInvalidRequest: Bool = false) async {
         guard let summaryActivity = MeetingSummaryActivityCoordinator.shared.beginProcessing() else {
             MeetingSummaryActivityCoordinator.presentBusyError()
             return
@@ -374,16 +373,6 @@ final class CommandModeService: ObservableObject {
         )
 
         self.isProcessing = true
-        defer {
-            if !isOutputValid() {
-                self.isProcessing = false
-                self.resetChatTransientState()
-                if self.shouldSyncCommandNotchState {
-                    NotchContentState.shared.setCommandProcessing(false)
-                    NotchContentState.shared.updateCommandStreamingText("")
-                }
-            }
-        }
         self.currentTurnCount = 0
         self.conversationHistory.append(Message(role: .user, content: text))
 
@@ -396,7 +385,7 @@ final class CommandModeService: ObservableObject {
             NotchContentState.shared.setCommandProcessing(true)
         }
 
-        await self.processNextTurn(notifyInvalidRequest: notifyInvalidRequest, isOutputValid: isOutputValid)
+        await self.processNextTurn(notifyInvalidRequest: notifyInvalidRequest)
     }
 
     /// Process follow-up command from notch input
@@ -460,8 +449,7 @@ final class CommandModeService: ObservableObject {
 
     // MARK: - Agent Loop
 
-    private func processNextTurn(notifyInvalidRequest: Bool = false, isOutputValid: @escaping @MainActor () -> Bool = { true }) async {
-        guard isOutputValid() else { return }
+    private func processNextTurn(notifyInvalidRequest: Bool = false) async {
         if self.currentTurnCount >= self.maxTurns {
             let errorMsg = "Reached maximum steps limit. Please review the progress and continue if needed."
             self.conversationHistory.append(Message(
@@ -493,8 +481,7 @@ final class CommandModeService: ObservableObject {
         }
 
         do {
-            let response = try await callLLM(isOutputValid: isOutputValid)
-            guard isOutputValid() else { return }
+            let response = try await callLLM()
 
             if let tc = response.toolCall {
                 // Determine step type based on command purpose
@@ -542,7 +529,7 @@ final class CommandModeService: ObservableObject {
                 }
 
                 // Auto-execute
-                await self.executeCommand(tc.command, workingDirectory: tc.workingDirectory, callId: tc.id, purpose: tc.purpose, isOutputValid: isOutputValid)
+                await self.executeCommand(tc.command, workingDirectory: tc.workingDirectory, callId: tc.id, purpose: tc.purpose)
 
             } else {
                 // Just a text response - check if it's a final summary
@@ -573,7 +560,6 @@ final class CommandModeService: ObservableObject {
             }
 
         } catch {
-            guard isOutputValid() else { return }
             let errorMsg: String
             if case LLMError.invalidRequest = error {
                 errorMsg = error.localizedDescription
@@ -688,8 +674,7 @@ final class CommandModeService: ObservableObject {
         return false
     }
 
-    private func executeCommand(_ command: String, workingDirectory: String?, callId: String, purpose: String? = nil, isOutputValid: @escaping @MainActor () -> Bool = { true }) async {
-        guard isOutputValid() else { return }
+    private func executeCommand(_ command: String, workingDirectory: String?, callId: String, purpose: String? = nil) async {
         self.currentStep = .executing(command)
 
         let result = await terminalService.execute(
@@ -697,8 +682,6 @@ final class CommandModeService: ObservableObject {
             workingDirectory: workingDirectory
         )
 
-        // A command already dispatched cannot be undone. Record its actual outcome
-        // even if Escape suppresses every subsequent agent turn and visible output.
         // Create enhanced result with context
         let enhancedResult = EnhancedCommandResult(
             result: result,
@@ -717,13 +700,8 @@ final class CommandModeService: ObservableObject {
             stepType: resultStepType
         ))
 
-        guard isOutputValid() else {
-            self.saveCurrentChat()
-            return
-        }
-
         // Continue the loop - let the AI see the result and decide what to do next
-        await self.processNextTurn(isOutputValid: isOutputValid)
+        await self.processNextTurn()
     }
 
     // MARK: - Enhanced Result
@@ -776,8 +754,7 @@ final class CommandModeService: ObservableObject {
         }
     }
 
-    private func callLLM(isOutputValid: @escaping @MainActor () -> Bool) async throws -> LLMResponse {
-        guard isOutputValid() else { throw CancellationError() }
+    private func callLLM() async throws -> LLMResponse {
         let settings = SettingsStore.shared
         if let issue = settings.commandModeReadinessIssue {
             throw LLMError.invalidRequest(issue)
@@ -977,7 +954,6 @@ final class CommandModeService: ObservableObject {
             config.onThinkingChunk = { [weak self] (chunk: String) in
                 guard let self = self else { return }
                 Task { @MainActor in
-                    guard isOutputValid() else { return }
                     self.thinkingBuffer.append(chunk)
 
                     // 60fps UI update throttle for thinking
@@ -993,7 +969,6 @@ final class CommandModeService: ObservableObject {
             config.onContentChunk = { [weak self] (chunk: String) in
                 guard let self = self else { return }
                 Task { @MainActor in
-                    guard isOutputValid() else { return }
                     self.streamingBuffer.append(chunk)
 
                     // 60fps UI update throttle
@@ -1015,7 +990,6 @@ final class CommandModeService: ObservableObject {
         DebugLogger.shared.info("Using LLMClient for Command Mode (streaming=\(enableStreaming), messages=\(messages.count), history=\(self.conversationHistory.count))", source: "CommandModeService")
 
         let response = try await LLMClient.shared.call(config)
-        guard isOutputValid() else { throw CancellationError() }
 
         // Final UI update - ensure all content is displayed
         let fullContent = self.streamingBuffer.joined()
@@ -1028,7 +1002,6 @@ final class CommandModeService: ObservableObject {
 
         // Small delay to let the final content render, then clear
         try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
-        guard isOutputValid() else { throw CancellationError() }
 
         // Capture final thinking before clearing (for message storage)
         let finalThinking = response.thinking ?? (self.thinkingBuffer.isEmpty ? nil : self.thinkingBuffer.joined())

@@ -1451,12 +1451,7 @@ final class TypingService {
     }
 
     private nonisolated func setTextViaSelection(_ element: AXUIElement, _ text: String, isOutputValid: () -> Bool) -> Bool {
-        // First, select all existing text
-        guard isOutputValid() else { return false }
-        let selectAllResult = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, "" as CFString)
-        self.log("[TypingService] Select all result: \(selectAllResult.rawValue)")
-
-        // Then replace the selection with our text
+        // Replace the current selection in one write; never erase it first.
         let cfText = text as CFString
         guard isOutputValid() else { return false }
         let result = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, cfText)
