@@ -2023,6 +2023,8 @@ struct ContentView: View {
                         .accessibilityLabel(self.columnVisibility == .detailOnly ? "Show sidebar" : "Hide sidebar")
                     }
                     ToolbarItemGroup(placement: .primaryAction) {
+                        UpdateAvailableToolbarButton()
+
                         self.todayStatsButton
                             .buttonStyle(.automatic)
 
@@ -6137,6 +6139,28 @@ private extension ContentView {
         }
 
         self.refreshDevices()
+    }
+}
+
+private struct UpdateAvailableToolbarButton: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject private var updater = SimpleUpdater.shared
+
+    var body: some View {
+        if let version = self.updater.availableUpdateVersion {
+            Button {
+                self.updater.showAvailableUpdate()
+            } label: {
+                Image(systemName: "arrow.down.circle.fill")
+                    .fluidToolbarIcon()
+                    .foregroundStyle(self.theme.palette.accent)
+            }
+            .buttonStyle(.automatic)
+            .disabled(self.updater.isCheckingForUpdates || self.updater.isUpdateInProgress)
+            .help("Update available: \(version). View update.")
+            .accessibilityLabel("Update available: \(version)")
+            .accessibilityHint("View update details")
+        }
     }
 }
 

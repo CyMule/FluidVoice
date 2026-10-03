@@ -11,6 +11,17 @@ import FluidAudio
 
 // swiftlint:disable file_length type_body_length
 final class SettingsStore: ObservableObject {
+    enum UpdateKeys {
+        static let autoUpdateCheckEnabled = "AutoUpdateCheckEnabled"
+        static let showUpdatePopups = "ShowUpdatePopups"
+        static let popupPreferenceRevision = "UpdatePopupPreferenceRevision"
+        static let betaReleasesEnabled = "BetaReleasesEnabled"
+        static let channelPreferenceRevision = "UpdateChannelPreferenceRevision"
+        static let lastUpdateCheckDate = "LastUpdateCheckDate"
+        static let updatePromptSnoozedUntil = "UpdatePromptSnoozedUntil"
+        static let snoozedUpdateVersion = "SnoozedUpdateVersion"
+    }
+
     static let microphonePriorityMigrationVersion = 4
 
     static let shared = SettingsStore()
@@ -2753,7 +2764,23 @@ final class SettingsStore: ObservableObject {
             return value as? Bool ?? true // Default to enabled
         }
         set {
+            guard newValue != self.autoUpdateCheckEnabled else { return }
+            objectWillChange.send()
             self.defaults.set(newValue, forKey: Keys.autoUpdateCheckEnabled)
+        }
+    }
+
+    var showUpdatePopups: Bool {
+        get { self.defaults.object(forKey: Keys.showUpdatePopups) as? Bool ?? true }
+        set {
+            guard newValue != self.showUpdatePopups else { return }
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.showUpdatePopups)
+            let revision = self.defaults.integer(forKey: UpdateKeys.popupPreferenceRevision)
+            self.defaults.set(revision &+ 1, forKey: UpdateKeys.popupPreferenceRevision)
+            Task { @MainActor in
+                SimpleUpdater.shared.automaticUpdatePopupPreferenceDidChange(isEnabled: newValue)
+            }
         }
     }
 
@@ -2762,6 +2789,8 @@ final class SettingsStore: ObservableObject {
             return self.defaults.object(forKey: Keys.lastUpdateCheckDate) as? Date
         }
         set {
+            guard newValue != self.lastUpdateCheckDate else { return }
+            objectWillChange.send()
             self.defaults.set(newValue, forKey: Keys.lastUpdateCheckDate)
         }
     }
@@ -3580,6 +3609,7 @@ final class SettingsStore: ObservableObject {
             transcriptionSoundVolume: self.transcriptionSoundVolume,
             transcriptionSoundIndependentVolume: false,
             autoUpdateCheckEnabled: self.autoUpdateCheckEnabled,
+            showUpdatePopups: self.showUpdatePopups,
             betaReleasesEnabled: self.betaReleasesEnabled,
             enableDebugLogs: self.enableDebugLogs,
             shareAnonymousAnalytics: self.shareDetailedAnalytics,
@@ -3726,6 +3756,9 @@ final class SettingsStore: ObservableObject {
         self.transcriptionStartSound = payload.transcriptionStartSound
         self.transcriptionSoundVolume = payload.transcriptionSoundVolume
         self.autoUpdateCheckEnabled = payload.autoUpdateCheckEnabled
+        if let showUpdatePopups = payload.showUpdatePopups {
+            self.showUpdatePopups = showUpdatePopups
+        }
         self.betaReleasesEnabled = payload.betaReleasesEnabled
         self.enableDebugLogs = payload.enableDebugLogs
         self.shareDetailedAnalytics = payload.shareAnonymousAnalytics
@@ -5822,11 +5855,12 @@ private extension SettingsStore {
         static let spokenSendPhrase = "SpokenSendPhrase"
         static let spokenSendKey = "SpokenSendKey"
         static let reliablePasteMigrationV1 = "TextInsertionModeMigratedToReliablePasteV1"
-        static let autoUpdateCheckEnabled = "AutoUpdateCheckEnabled"
-        static let betaReleasesEnabled = "BetaReleasesEnabled"
-        static let lastUpdateCheckDate = "LastUpdateCheckDate"
-        static let updatePromptSnoozedUntil = "UpdatePromptSnoozedUntil"
-        static let snoozedUpdateVersion = "SnoozedUpdateVersion"
+        static let autoUpdateCheckEnabled = UpdateKeys.autoUpdateCheckEnabled
+        static let showUpdatePopups = UpdateKeys.showUpdatePopups
+        static let betaReleasesEnabled = UpdateKeys.betaReleasesEnabled
+        static let lastUpdateCheckDate = UpdateKeys.lastUpdateCheckDate
+        static let updatePromptSnoozedUntil = UpdateKeys.updatePromptSnoozedUntil
+        static let snoozedUpdateVersion = UpdateKeys.snoozedUpdateVersion
         static let playgroundUsed = "PlaygroundUsed"
         static let onboardingCompleted = "OnboardingCompleted"
         static let onboardingGeneration = "OnboardingGeneration"
@@ -6081,10 +6115,16 @@ extension SettingsStore {
             return value as? Bool ?? false // Default to stable-only updates
         }
         set {
+            guard newValue != self.betaReleasesEnabled else { return }
             objectWillChange.send()
             self.defaults.set(newValue, forKey: Keys.betaReleasesEnabled)
+            let revision = self.defaults.integer(forKey: UpdateKeys.channelPreferenceRevision)
+            self.defaults.set(revision &+ 1, forKey: UpdateKeys.channelPreferenceRevision)
             self.lastUpdateCheckDate = nil
             self.clearUpdateSnooze()
+            Task { @MainActor in
+                SimpleUpdater.shared.updateChannelDidChange()
+            }
         }
     }
 

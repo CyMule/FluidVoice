@@ -7,7 +7,6 @@
 
 import AppKit
 import AVFoundation
-import PromiseKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -28,6 +27,7 @@ struct SettingsView: View {
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject private var updater = SimpleUpdater.shared
     let selectedSection: SettingsSection
     let searchResults: [SettingsSearchResult]
     let searchScrollRequest: Int
@@ -405,6 +405,27 @@ struct SettingsView: View {
 
                                 HStack(alignment: .center) {
                                     VStack(alignment: .leading, spacing: 2) {
+                                        Text("Show update pop-ups")
+                                            .font(self.theme.typography.bodyStrong)
+                                            .foregroundStyle(self.settingsTitleText)
+                                        Text("When off, available updates appear in the top bar and here without automatic pop-ups.")
+                                            .font(self.theme.typography.bodySmall)
+                                            .foregroundStyle(self.settingsSecondaryText)
+                                    }
+
+                                    Spacer()
+
+                                    Toggle("Show update pop-ups", isOn: Binding(
+                                        get: { self.settings.showUpdatePopups },
+                                        set: { self.settings.showUpdatePopups = $0 }
+                                    ))
+                                    .toggleStyle(.switch)
+                                    .tint(self.theme.palette.accent)
+                                    .labelsHidden()
+                                }
+
+                                HStack(alignment: .center) {
+                                    VStack(alignment: .leading, spacing: 2) {
                                         Text("Beta Releases")
                                             .font(self.theme.typography.bodyStrong)
                                             .foregroundStyle(self.settingsTitleText)
@@ -442,42 +463,33 @@ struct SettingsView: View {
                             }
                             .settingsSearchTarget(.automaticUpdates)
 
+                            if let version = self.updater.availableUpdateVersion {
+                                HStack(spacing: 10) {
+                                    Label("Update available · \(version)", systemImage: "arrow.down.circle")
+                                        .font(self.theme.typography.bodyStrong)
+                                        .foregroundStyle(self.theme.palette.accent)
+                                        .fixedSize(horizontal: false, vertical: true)
+
+                                    Spacer()
+
+                                    Button("View Update") {
+                                        self.updater.showAvailableUpdate()
+                                    }
+                                    .fluidOutlinedButton()
+                                    .controlSize(.regular)
+                                    .disabled(self.updater.isCheckingForUpdates || self.updater.isUpdateInProgress)
+                                }
+                            }
+
                             // Update Buttons
                             HStack(spacing: 10) {
                                 Button("Check for Updates") {
-                                    Task { @MainActor in
-                                        do {
-                                            let includePrerelease = SettingsStore.shared.betaReleasesEnabled
-                                            try await SimpleUpdater.shared.checkAndUpdate(
-                                                owner: "altic-dev",
-                                                repo: "Fluid-oss",
-                                                includePrerelease: includePrerelease
-                                            )
-                                        } catch SimpleUpdateError.updateAlreadyInProgress {
-                                            DebugLogger.shared.info(
-                                                "Update installation already in progress",
-                                                source: "SettingsView"
-                                            )
-                                        } catch {
-                                            let msg = NSAlert()
-                                            if let pmkError = error as? PMKError, pmkError.isCancelled {
-                                                let isBeta = SettingsStore.shared.betaReleasesEnabled
-                                                msg.messageText = isBeta ? "You're Up To Date (Beta)" : "You're Up To Date"
-                                                msg.informativeText = isBeta
-                                                    ? "You're already running the latest build available in the beta channel."
-                                                    : "You're already running the latest version of FluidVoice."
-                                            } else {
-                                                msg.messageText = "Update Check Failed"
-                                                msg.informativeText = "Unable to check for updates. Please try again later.\n\nError: \(error.localizedDescription)"
-                                            }
-                                            msg.alertStyle = .informational
-                                            msg.runModal()
-                                        }
-                                    }
+                                    self.updater.checkForUpdatesManually()
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .tint(self.theme.palette.accent)
                                 .controlSize(.regular)
+                                .disabled(self.updater.isCheckingForUpdates || self.updater.isUpdateInProgress)
 
                                 Button("Release Notes") {
                                     if let url = URL(string: "https://github.com/altic-dev/Fluid-oss/releases") {
