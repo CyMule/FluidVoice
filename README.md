@@ -22,6 +22,8 @@ Open source voice-to-text dictation app for macOS with on-device AI enhancement.
 > Our official website is [altic.dev/fluid](https://altic.dev/fluid). Our official domains also include **fluidvoice.com** and **fluidvoice.app**.
 >
 > For official downloads, use this repository's [GitHub Releases](https://github.com/altic-dev/FluidVoice/releases).
+>
+> If **fluidvoice.org** appears in your search results claiming to be our official website, please report the misleading result to the search provider.
 
 > [!NOTE]
 > FluidVoice is on macOS today. **iOS and Windows are on the way** — join the waitlist to get notified when we launch: **[altic.dev/fluid/waitlist](https://www.altic.dev/fluid/waitlist)**
