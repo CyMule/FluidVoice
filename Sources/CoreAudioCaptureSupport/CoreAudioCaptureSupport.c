@@ -3,6 +3,7 @@
 #include <dispatch/dispatch.h>
 #include <limits.h>
 #include <mach/mach_time.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +12,7 @@
 // realtime producer strictly allocation-free.
 #define FV_RING_CAPACITY 64u
 #define FV_MAX_FRAMES_PER_PACKET 8192u
+#define FV_AUDIO_TOPOLOGY_TRACE_CAPACITY 8192u
 
 typedef struct {
     float samples[FV_MAX_FRAMES_PER_PACKET];
@@ -22,6 +24,7 @@ typedef struct {
 
 typedef struct {
     AudioObjectID deviceID;
+    AudioStreamID streamID;
     AudioDeviceIOProcID ioProcID;
     AudioStreamBasicDescription format;
     uint32_t bufferFrameSize;
@@ -31,11 +34,232 @@ typedef struct {
     _Atomic uint64_t readIndex;
     _Atomic uint64_t droppedPackets;
     _Atomic bool running;
+    _Atomic bool formatDirty;
+    _Atomic bool packetGateOpen;
     FVPacketSlot slots[FV_RING_CAPACITY];
 } FVCapture;
 
+typedef struct {
+    _Atomic uint64_t publishedSequence;
+    _Atomic uint64_t sequence;
+    _Atomic uint64_t continuousTime;
+    _Atomic uint64_t generation;
+    _Atomic uint32_t event;
+    _Atomic uint32_t owner;
+    _Atomic uint32_t objectID;
+    _Atomic uint32_t selector;
+    _Atomic uint32_t scope;
+    _Atomic uint32_t element;
+    _Atomic uint32_t queueRole;
+    _Atomic uint32_t phase;
+    _Atomic uint32_t transport;
+    _Atomic uint32_t isMainThread;
+    _Atomic int32_t status;
+} FVAudioTopologyTraceSlot;
+
+static _Atomic bool fvAudioTopologyTraceEnabled = false;
+static _Atomic uint64_t fvAudioTopologyTraceSequence = 0;
+static _Atomic uint64_t fvAudioTopologyMainHeartbeat = 0;
+static FVAudioTopologyTraceSlot
+    fvAudioTopologyTraceSlots[FV_AUDIO_TOPOLOGY_TRACE_CAPACITY];
+
+void fv_audio_topology_trace_set_enabled(bool enabled) {
+    atomic_store_explicit(
+        &fvAudioTopologyTraceEnabled,
+        enabled,
+        memory_order_release
+    );
+}
+
+bool fv_audio_topology_trace_is_enabled(void) {
+    return atomic_load_explicit(
+        &fvAudioTopologyTraceEnabled,
+        memory_order_acquire
+    );
+}
+
+uint64_t fv_audio_topology_trace_record(
+    uint32_t event,
+    uint32_t owner,
+    AudioObjectID objectID,
+    AudioObjectPropertySelector selector,
+    AudioObjectPropertyScope scope,
+    AudioObjectPropertyElement element,
+    uint32_t queueRole,
+    uint32_t phase,
+    uint32_t transport,
+    int32_t status,
+    uint64_t generation
+) {
+    if (!atomic_load_explicit(
+            &fvAudioTopologyTraceEnabled,
+            memory_order_relaxed
+        )) {
+        return 0;
+    }
+
+    const uint64_t sequence = atomic_fetch_add_explicit(
+        &fvAudioTopologyTraceSequence,
+        1,
+        memory_order_relaxed
+    ) + 1;
+    FVAudioTopologyTraceSlot *slot =
+        &fvAudioTopologyTraceSlots[(sequence - 1) % FV_AUDIO_TOPOLOGY_TRACE_CAPACITY];
+
+    // Zero marks the slot as being mutated. A reader that races this write
+    // discards the copy after its second acquire load.
+    atomic_store_explicit(&slot->publishedSequence, 0, memory_order_release);
+    atomic_store_explicit(&slot->sequence, sequence, memory_order_relaxed);
+    atomic_store_explicit(&slot->continuousTime, mach_continuous_time(), memory_order_relaxed);
+    atomic_store_explicit(&slot->generation, generation, memory_order_relaxed);
+    atomic_store_explicit(&slot->event, event, memory_order_relaxed);
+    atomic_store_explicit(&slot->owner, owner, memory_order_relaxed);
+    atomic_store_explicit(&slot->objectID, objectID, memory_order_relaxed);
+    atomic_store_explicit(&slot->selector, selector, memory_order_relaxed);
+    atomic_store_explicit(&slot->scope, scope, memory_order_relaxed);
+    atomic_store_explicit(&slot->element, element, memory_order_relaxed);
+    atomic_store_explicit(&slot->queueRole, queueRole, memory_order_relaxed);
+    atomic_store_explicit(&slot->phase, phase, memory_order_relaxed);
+    atomic_store_explicit(&slot->transport, transport, memory_order_relaxed);
+    atomic_store_explicit(&slot->isMainThread, pthread_main_np() != 0, memory_order_relaxed);
+    atomic_store_explicit(&slot->status, status, memory_order_relaxed);
+    atomic_store_explicit(
+        &slot->publishedSequence,
+        sequence,
+        memory_order_release
+    );
+    return sequence;
+}
+
+uint32_t fv_audio_topology_trace_snapshot(
+    uint64_t afterSequence,
+    FVAudioTopologyTraceEvent *events,
+    uint32_t capacity,
+    uint64_t *latestSequence
+) {
+    const uint64_t latest = atomic_load_explicit(
+        &fvAudioTopologyTraceSequence,
+        memory_order_acquire
+    );
+    if (latestSequence != NULL) {
+        *latestSequence = latest;
+    }
+    if (events == NULL || capacity == 0 || latest <= afterSequence) {
+        return 0;
+    }
+
+    const uint64_t oldestAvailable =
+        latest > FV_AUDIO_TOPOLOGY_TRACE_CAPACITY
+            ? latest - FV_AUDIO_TOPOLOGY_TRACE_CAPACITY + 1
+            : 1;
+    uint64_t sequence = afterSequence + 1;
+    if (sequence < oldestAvailable) {
+        sequence = oldestAvailable;
+    }
+
+    uint32_t copied = 0;
+    for (; sequence <= latest && copied < capacity; ++sequence) {
+        FVAudioTopologyTraceSlot *slot =
+            &fvAudioTopologyTraceSlots[(sequence - 1) % FV_AUDIO_TOPOLOGY_TRACE_CAPACITY];
+        const uint64_t publishedBefore = atomic_load_explicit(
+            &slot->publishedSequence,
+            memory_order_acquire
+        );
+        if (publishedBefore != sequence) {
+            continue;
+        }
+        const FVAudioTopologyTraceEvent candidate = {
+            .sequence = atomic_load_explicit(&slot->sequence, memory_order_relaxed),
+            .continuousTime = atomic_load_explicit(&slot->continuousTime, memory_order_relaxed),
+            .generation = atomic_load_explicit(&slot->generation, memory_order_relaxed),
+            .event = atomic_load_explicit(&slot->event, memory_order_relaxed),
+            .owner = atomic_load_explicit(&slot->owner, memory_order_relaxed),
+            .objectID = atomic_load_explicit(&slot->objectID, memory_order_relaxed),
+            .selector = atomic_load_explicit(&slot->selector, memory_order_relaxed),
+            .scope = atomic_load_explicit(&slot->scope, memory_order_relaxed),
+            .element = atomic_load_explicit(&slot->element, memory_order_relaxed),
+            .queueRole = atomic_load_explicit(&slot->queueRole, memory_order_relaxed),
+            .phase = atomic_load_explicit(&slot->phase, memory_order_relaxed),
+            .transport = atomic_load_explicit(&slot->transport, memory_order_relaxed),
+            .isMainThread = atomic_load_explicit(&slot->isMainThread, memory_order_relaxed),
+            .status = atomic_load_explicit(&slot->status, memory_order_relaxed),
+        };
+        atomic_thread_fence(memory_order_acquire);
+        const uint64_t publishedAfter = atomic_load_explicit(
+            &slot->publishedSequence,
+            memory_order_acquire
+        );
+        if (publishedAfter != sequence || candidate.sequence != sequence) {
+            continue;
+        }
+        events[copied++] = candidate;
+    }
+    return copied;
+}
+
+uint32_t fv_audio_topology_trace_capacity(void) {
+    return FV_AUDIO_TOPOLOGY_TRACE_CAPACITY;
+}
+
+uint64_t fv_audio_topology_trace_latest_sequence(void) {
+    return atomic_load_explicit(
+        &fvAudioTopologyTraceSequence,
+        memory_order_acquire
+    );
+}
+
+void fv_audio_topology_trace_main_heartbeat(void) {
+    if (!atomic_load_explicit(
+            &fvAudioTopologyTraceEnabled,
+            memory_order_relaxed
+        )) {
+        return;
+    }
+    atomic_store_explicit(
+        &fvAudioTopologyMainHeartbeat,
+        mach_continuous_time(),
+        memory_order_release
+    );
+}
+
+uint64_t fv_audio_topology_trace_last_main_heartbeat(void) {
+    return atomic_load_explicit(
+        &fvAudioTopologyMainHeartbeat,
+        memory_order_acquire
+    );
+}
+
+void fv_audio_topology_trace_reset(void) {
+    atomic_store_explicit(&fvAudioTopologyTraceEnabled, false, memory_order_release);
+    atomic_store_explicit(&fvAudioTopologyTraceSequence, 0, memory_order_release);
+    atomic_store_explicit(&fvAudioTopologyMainHeartbeat, 0, memory_order_release);
+    for (uint32_t index = 0; index < FV_AUDIO_TOPOLOGY_TRACE_CAPACITY; ++index) {
+        atomic_store_explicit(
+            &fvAudioTopologyTraceSlots[index].publishedSequence,
+            0,
+            memory_order_release
+        );
+        FVAudioTopologyTraceSlot *slot = &fvAudioTopologyTraceSlots[index];
+        atomic_store_explicit(&slot->sequence, 0, memory_order_relaxed);
+        atomic_store_explicit(&slot->continuousTime, 0, memory_order_relaxed);
+        atomic_store_explicit(&slot->generation, 0, memory_order_relaxed);
+        atomic_store_explicit(&slot->event, 0, memory_order_relaxed);
+        atomic_store_explicit(&slot->owner, 0, memory_order_relaxed);
+        atomic_store_explicit(&slot->objectID, 0, memory_order_relaxed);
+        atomic_store_explicit(&slot->selector, 0, memory_order_relaxed);
+        atomic_store_explicit(&slot->scope, 0, memory_order_relaxed);
+        atomic_store_explicit(&slot->element, 0, memory_order_relaxed);
+        atomic_store_explicit(&slot->queueRole, 0, memory_order_relaxed);
+        atomic_store_explicit(&slot->phase, 0, memory_order_relaxed);
+        atomic_store_explicit(&slot->transport, 0, memory_order_relaxed);
+        atomic_store_explicit(&slot->isMainThread, 0, memory_order_relaxed);
+        atomic_store_explicit(&slot->status, 0, memory_order_relaxed);
+    }
+}
+
 static OSStatus fv_get_input_stream_format(
     AudioObjectID deviceID,
+    AudioStreamID *streamID,
     AudioStreamBasicDescription *format
 ) {
     AudioObjectPropertyAddress streamsAddress = {
@@ -57,17 +281,20 @@ static OSStatus fv_get_input_stream_format(
         return status != noErr ? status : kAudioHardwareUnsupportedOperationError;
     }
 
-    AudioStreamID streamID = kAudioObjectUnknown;
+    AudioStreamID resolvedStreamID = kAudioObjectUnknown;
     status = AudioObjectGetPropertyData(
         deviceID,
         &streamsAddress,
         0,
         NULL,
         &streamsSize,
-        &streamID
+        &resolvedStreamID
     );
-    if (status != noErr || streamID == kAudioObjectUnknown) {
+    if (status != noErr || resolvedStreamID == kAudioObjectUnknown) {
         return status != noErr ? status : kAudioHardwareBadObjectError;
+    }
+    if (streamID != NULL) {
+        *streamID = resolvedStreamID;
     }
 
     AudioObjectPropertyAddress formatAddress = {
@@ -77,7 +304,7 @@ static OSStatus fv_get_input_stream_format(
     };
     UInt32 formatSize = sizeof(*format);
     return AudioObjectGetPropertyData(
-        streamID,
+        resolvedStreamID,
         &formatAddress,
         0,
         NULL,
@@ -94,6 +321,35 @@ static OSStatus fv_get_buffer_frame_size(AudioObjectID deviceID, uint32_t *frame
     };
     UInt32 size = sizeof(*frameSize);
     return AudioObjectGetPropertyData(deviceID, &address, 0, NULL, &size, frameSize);
+}
+
+static OSStatus fv_get_maximum_buffer_frame_size(
+    AudioObjectID deviceID,
+    uint32_t fallbackFrameSize,
+    uint32_t *maximumFrameSize
+) {
+    AudioObjectPropertyAddress address = {
+        kAudioDevicePropertyUsesVariableBufferFrameSizes,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMain,
+    };
+    if (!AudioObjectHasProperty(deviceID, &address)) {
+        *maximumFrameSize = fallbackFrameSize;
+        return noErr;
+    }
+    UInt32 size = sizeof(*maximumFrameSize);
+    OSStatus status = AudioObjectGetPropertyData(
+        deviceID,
+        &address,
+        0,
+        NULL,
+        &size,
+        maximumFrameSize
+    );
+    if (status == noErr && *maximumFrameSize == 0) {
+        *maximumFrameSize = fallbackFrameSize;
+    }
+    return status;
 }
 
 static bool fv_format_is_supported(
@@ -171,6 +427,27 @@ static inline float fv_read_sample(
     }
 }
 
+uint32_t fv_core_audio_buffer_bytes_per_frame(
+    uint32_t bytesPerSample,
+    uint32_t channelCount
+) {
+    if (bytesPerSample == 0 || channelCount == 0 ||
+        bytesPerSample > UINT32_MAX / channelCount) {
+        return 0;
+    }
+    return bytesPerSample * channelCount;
+}
+
+uint32_t fv_core_audio_buffer_frame_count(
+    uint32_t dataByteSize,
+    uint32_t bytesPerSample,
+    uint32_t channelCount
+) {
+    const uint32_t bytesPerFrame =
+        fv_core_audio_buffer_bytes_per_frame(bytesPerSample, channelCount);
+    return bytesPerFrame == 0 ? 0 : dataByteSize / bytesPerFrame;
+}
+
 static uint32_t fv_frame_count(
     const FVCapture *capture,
     const AudioBufferList *inputData
@@ -182,7 +459,19 @@ static uint32_t fv_frame_count(
         if (buffer->mData == NULL || buffer->mDataByteSize == 0) {
             continue;
         }
-        const uint32_t frames = buffer->mDataByteSize / capture->format.mBytesPerFrame;
+        // Derive the stride from the actual AudioBuffer layout. Core Audio can
+        // expose one buffer per channel even when the device's virtual ASBD
+        // temporarily reports the stream-wide interleaved byte stride during
+        // a route change. Using ASBD.mBytesPerFrame in that state turns a
+        // 512-frame, 3-buffer callback into 170 frames and speeds audio up 3x.
+        const uint32_t frames = fv_core_audio_buffer_frame_count(
+            buffer->mDataByteSize,
+            capture->bytesPerSample,
+            buffer->mNumberChannels
+        );
+        if (frames == 0) {
+            continue;
+        }
         if (frames < frameCount) {
             frameCount = frames;
         }
@@ -206,7 +495,9 @@ static OSStatus fv_io_proc(
 
     FVCapture *capture = (FVCapture *) inClientData;
     if (capture == NULL || inInputData == NULL ||
-        !atomic_load_explicit(&capture->running, memory_order_relaxed)) {
+        !atomic_load_explicit(&capture->running, memory_order_relaxed) ||
+        atomic_load_explicit(&capture->formatDirty, memory_order_acquire) ||
+        !atomic_load_explicit(&capture->packetGateOpen, memory_order_acquire)) {
         return noErr;
     }
 
@@ -242,8 +533,10 @@ static OSStatus fv_io_proc(
 
         const uint8_t *data = (const uint8_t *) buffer->mData;
         const uint32_t channelCount = buffer->mNumberChannels;
+        const uint32_t bufferBytesPerFrame =
+            fv_core_audio_buffer_bytes_per_frame(capture->bytesPerSample, channelCount);
         for (uint32_t frame = 0; frame < frameCount; ++frame) {
-            const uint8_t *frameData = data + frame * capture->format.mBytesPerFrame;
+            const uint8_t *frameData = data + frame * bufferBytesPerFrame;
             float sum = 0.0f;
             for (uint32_t channel = 0; channel < channelCount; ++channel) {
                 sum += fv_read_sample(
@@ -297,7 +590,11 @@ int32_t fv_core_audio_capture_create(
     }
     capture->deviceID = deviceID;
 
-    OSStatus status = fv_get_input_stream_format(deviceID, &capture->format);
+    OSStatus status = fv_get_input_stream_format(
+        deviceID,
+        &capture->streamID,
+        &capture->format
+    );
     if (status == noErr &&
         !fv_format_is_supported(&capture->format, &capture->bytesPerSample)) {
         status = kAudioHardwareUnsupportedOperationError;
@@ -305,9 +602,17 @@ int32_t fv_core_audio_capture_create(
     if (status == noErr) {
         status = fv_get_buffer_frame_size(deviceID, &capture->bufferFrameSize);
     }
+    uint32_t maximumBufferFrameSize = capture->bufferFrameSize;
+    if (status == noErr) {
+        status = fv_get_maximum_buffer_frame_size(
+            deviceID,
+            capture->bufferFrameSize,
+            &maximumBufferFrameSize
+        );
+    }
     if (status == noErr &&
         (capture->bufferFrameSize == 0 ||
-         capture->bufferFrameSize > FV_MAX_FRAMES_PER_PACKET)) {
+         maximumBufferFrameSize > FV_MAX_FRAMES_PER_PACKET)) {
         status = kAudioHardwareUnsupportedOperationError;
     }
     if (status != noErr) {
@@ -324,6 +629,8 @@ int32_t fv_core_audio_capture_create(
     atomic_init(&capture->readIndex, 0);
     atomic_init(&capture->droppedPackets, 0);
     atomic_init(&capture->running, false);
+    atomic_init(&capture->formatDirty, false);
+    atomic_init(&capture->packetGateOpen, false);
 
     status = AudioDeviceCreateIOProcID(
         deviceID,
@@ -352,6 +659,7 @@ int32_t fv_core_audio_capture_start(FVCoreAudioCaptureRef captureRef) {
         return noErr;
     }
 
+    atomic_store_explicit(&capture->packetGateOpen, false, memory_order_release);
     atomic_store_explicit(&capture->running, true, memory_order_release);
     OSStatus status = AudioDeviceStart(capture->deviceID, capture->ioProcID);
     if (status != noErr) {
@@ -371,31 +679,41 @@ int32_t fv_core_audio_capture_stop(FVCoreAudioCaptureRef captureRef) {
         return noErr;
     }
 
-    // Keep accepting callbacks until AudioDeviceStop has synchronized with the
-    // IOProc. Packets acquired before the caller's stop boundary can then be
-    // timestamp-trimmed by the consumer instead of being dropped here.
+    // Close publication before synchronizing with the IOProc. The consumer
+    // still drains every packet already committed to the ring.
+    atomic_store_explicit(&capture->packetGateOpen, false, memory_order_release);
     OSStatus status = AudioDeviceStop(capture->deviceID, capture->ioProcID);
     atomic_store_explicit(&capture->running, false, memory_order_release);
     dispatch_semaphore_signal(capture->packetSemaphore);
     return status;
 }
 
-void fv_core_audio_capture_destroy(FVCoreAudioCaptureRef captureRef) {
+int32_t fv_core_audio_capture_destroy(FVCoreAudioCaptureRef captureRef) {
     FVCapture *capture = (FVCapture *) captureRef;
     if (capture == NULL) {
-        return;
+        return noErr;
     }
     if (atomic_load_explicit(&capture->running, memory_order_acquire)) {
-        (void) fv_core_audio_capture_stop(captureRef);
+        OSStatus stopStatus = fv_core_audio_capture_stop(captureRef);
+        if (stopStatus != noErr) {
+            return stopStatus;
+        }
     }
     if (capture->ioProcID != NULL) {
-        (void) AudioDeviceDestroyIOProcID(capture->deviceID, capture->ioProcID);
+        OSStatus destroyStatus = AudioDeviceDestroyIOProcID(
+            capture->deviceID,
+            capture->ioProcID
+        );
+        if (destroyStatus != noErr) {
+            return destroyStatus;
+        }
         capture->ioProcID = NULL;
     }
 #if !OS_OBJECT_USE_OBJC
     dispatch_release(capture->packetSemaphore);
 #endif
     free(capture);
+    return noErr;
 }
 
 bool fv_core_audio_capture_wait(
@@ -418,7 +736,8 @@ bool fv_core_audio_capture_peek(
     FVCoreAudioPacket *packet
 ) {
     FVCapture *capture = (FVCapture *) captureRef;
-    if (capture == NULL || packet == NULL) {
+    if (capture == NULL || packet == NULL ||
+        atomic_load_explicit(&capture->formatDirty, memory_order_acquire)) {
         return false;
     }
     const uint64_t readIndex =
@@ -478,6 +797,47 @@ bool fv_core_audio_capture_is_running(FVCoreAudioCaptureRef captureRef) {
     FVCapture *capture = (FVCapture *) captureRef;
     return capture != NULL &&
         atomic_load_explicit(&capture->running, memory_order_acquire);
+}
+
+void fv_core_audio_capture_mark_format_dirty(FVCoreAudioCaptureRef captureRef) {
+    FVCapture *capture = (FVCapture *) captureRef;
+    if (capture == NULL) {
+        return;
+    }
+    atomic_store_explicit(&capture->formatDirty, true, memory_order_release);
+    atomic_store_explicit(&capture->packetGateOpen, false, memory_order_release);
+}
+
+bool fv_core_audio_capture_open_packet_gate_if_clean(
+    FVCoreAudioCaptureRef captureRef
+) {
+    FVCapture *capture = (FVCapture *) captureRef;
+    if (capture == NULL ||
+        !atomic_load_explicit(&capture->running, memory_order_acquire) ||
+        atomic_load_explicit(&capture->formatDirty, memory_order_acquire)) {
+        return false;
+    }
+
+    atomic_store_explicit(&capture->packetGateOpen, true, memory_order_release);
+    if (atomic_load_explicit(&capture->formatDirty, memory_order_acquire)) {
+        atomic_store_explicit(&capture->packetGateOpen, false, memory_order_release);
+        return false;
+    }
+    return true;
+}
+
+bool fv_core_audio_capture_copy_stream_format(
+    FVCoreAudioCaptureRef captureRef,
+    AudioStreamID *streamID,
+    AudioStreamBasicDescription *format
+) {
+    const FVCapture *capture = (const FVCapture *) captureRef;
+    if (capture == NULL || streamID == NULL || format == NULL) {
+        return false;
+    }
+    *streamID = capture->streamID;
+    *format = capture->format;
+    return true;
 }
 
 double fv_core_audio_capture_sample_rate(FVCoreAudioCaptureRef captureRef) {

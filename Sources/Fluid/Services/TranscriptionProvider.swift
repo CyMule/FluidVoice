@@ -1,13 +1,13 @@
 import Foundation
 
-enum ModelPreparationPhase: Sendable, Equatable {
+nonisolated enum ModelPreparationPhase: Sendable, Equatable {
     case preparingDownload
     case downloading
     case optimizing
     case loading
 }
 
-struct ModelPreparationProgress: Sendable, Equatable {
+nonisolated struct ModelPreparationProgress: Sendable, Equatable {
     let phase: ModelPreparationPhase
     let fractionCompleted: Double?
 
@@ -27,15 +27,78 @@ struct ModelPreparationProgress: Sendable, Equatable {
 
 /// Bridges provider callbacks into dependencies whose progress handlers are `@Sendable`.
 /// The callback is immutable; callers remain responsible for hopping to their UI actor.
-final class ModelPreparationProgressRelay: @unchecked Sendable {
+final nonisolated class ModelPreparationProgressRelay: @unchecked Sendable {
+    private static let minimumDeliveryInterval: TimeInterval = 0.1
+
     private let handler: ((ModelPreparationProgress) -> Void)?
+    private let lock = NSLock()
+    private var lastPhase: ModelPreparationPhase?
+    private var lastDeliveredPercentage: Int?
+    private var lastDeliveryTime: TimeInterval = 0
+    private var pendingProgress: ModelPreparationProgress?
+    private var deliveryScheduled = false
 
     init(_ handler: ((ModelPreparationProgress) -> Void)?) {
         self.handler = handler
     }
 
     func report(_ progress: ModelPreparationProgress) {
-        self.handler?(progress)
+        let now = ProcessInfo.processInfo.systemUptime
+        let delivery = self.lock.withLock { () -> (immediate: Bool, delay: TimeInterval?) in
+            if progress.phase != self.lastPhase {
+                self.lastPhase = progress.phase
+                self.pendingProgress = nil
+                self.lastDeliveredPercentage = nil
+                self.lastDeliveryTime = now
+                return (true, nil)
+            }
+
+            guard progress.phase == .downloading else { return (false, nil) }
+
+            let percentage = Int((progress.fractionCompleted ?? 0) * 100)
+            guard percentage != self.lastDeliveredPercentage else { return (false, nil) }
+
+            let elapsed = now - self.lastDeliveryTime
+            if elapsed >= Self.minimumDeliveryInterval {
+                self.pendingProgress = nil
+                self.lastDeliveredPercentage = percentage
+                self.lastDeliveryTime = now
+                return (true, nil)
+            }
+
+            self.pendingProgress = progress
+            guard !self.deliveryScheduled else { return (false, nil) }
+            self.deliveryScheduled = true
+            return (false, Self.minimumDeliveryInterval - elapsed)
+        }
+
+        if delivery.immediate {
+            self.handler?(progress)
+        } else if let delay = delivery.delay {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.flushPendingProgress()
+            }
+        }
+    }
+
+    private func flushPendingProgress() {
+        let progress = self.lock.withLock { () -> ModelPreparationProgress? in
+            self.deliveryScheduled = false
+            guard let progress = self.pendingProgress,
+                  progress.phase == self.lastPhase
+            else {
+                self.pendingProgress = nil
+                return nil
+            }
+
+            self.pendingProgress = nil
+            self.lastDeliveredPercentage = Int((progress.fractionCompleted ?? 0) * 100)
+            self.lastDeliveryTime = ProcessInfo.processInfo.systemUptime
+            return progress
+        }
+        if let progress {
+            self.handler?(progress)
+        }
     }
 }
 
@@ -46,17 +109,37 @@ final class ModelPreparationProgressRelay: @unchecked Sendable {
 struct ASRTranscriptionResult {
     let text: String
     let confidence: Float
+    /// FluidAudio's own Parakeet processing time. This excludes FluidVoice
+    /// executor queueing, provider setup, and post-transcription work.
+    let parakeetProcessingDurationMilliseconds: Int?
+    let pronunciationEnrollment: PronunciationEnrollmentCapture?
+    let dictionaryLearningAlignment: DictionaryLearningAlignment?
 
-    init(text: String, confidence: Float = 1.0) {
+    init(
+        text: String,
+        confidence: Float = 1.0,
+        parakeetProcessingDurationMilliseconds: Int? = nil,
+        pronunciationEnrollment: PronunciationEnrollmentCapture? = nil,
+        dictionaryLearningAlignment: DictionaryLearningAlignment? = nil
+    ) {
         self.text = text
         self.confidence = confidence
+        self.parakeetProcessingDurationMilliseconds = parakeetProcessingDurationMilliseconds
+        self.pronunciationEnrollment = pronunciationEnrollment
+        self.dictionaryLearningAlignment = dictionaryLearningAlignment
     }
+}
+
+nonisolated struct ASRWordTiming: Sendable {
+    let text: String
+    let start: TimeInterval
+    let end: TimeInterval
 }
 
 // MARK: - Transcription Provider Protocol
 
 /// Protocol that abstracts speech-to-text transcription.
-/// Implementations can use different backends (FluidAudio, SwiftWhisper, etc.)
+/// Implementations can use different backends (FluidAudio, transcribe.cpp, etc.)
 protocol TranscriptionProvider {
     /// Display name of the provider
     var name: String { get }
@@ -86,6 +169,12 @@ protocol TranscriptionProvider {
     /// Transcribe audio captured while training dictionary replacements.
     /// Providers can bypass final-output transforms that would distort the saved phrase.
     func transcribeDictionaryTraining(_ samples: [Float]) async throws -> ASRTranscriptionResult
+    func transcribeDictionaryTraining(_ samples: [Float], capturePronunciation: Bool) async throws -> ASRTranscriptionResult
+
+    /// Meeting word alignment only; dictation never calls the method this gates.
+    var supportsWordTimings: Bool { get }
+
+    func transcribeWithWordTimings(_ samples: [Float]) async throws -> (result: ASRTranscriptionResult, words: [ASRWordTiming])
 
     /// Whether this provider prefers to handle long-form file transcription itself.
     /// This is useful when the backend already has model-native long-audio chunking/reassembly.
@@ -111,12 +200,22 @@ extension TranscriptionProvider {
     func clearCache() async throws {}
     var shouldClearCacheAfterCancellation: Bool { true }
     var prefersNativeFileTranscription: Bool { false }
+    var supportsWordTimings: Bool { false }
+
+    func transcribeWithWordTimings(_ samples: [Float]) async throws -> (result: ASRTranscriptionResult, words: [ASRWordTiming]) {
+        try (await self.transcribe(samples), [])
+    }
+
     func transcribeStreaming(_ samples: [Float]) async throws -> ASRTranscriptionResult {
         try await self.transcribe(samples)
     }
 
     func transcribeFinal(_ samples: [Float]) async throws -> ASRTranscriptionResult {
         try await self.transcribe(samples)
+    }
+
+    func transcribeDictionaryTraining(_ samples: [Float], capturePronunciation: Bool) async throws -> ASRTranscriptionResult {
+        try await self.transcribeDictionaryTraining(samples)
     }
 
     func transcribeDictionaryTraining(_ samples: [Float]) async throws -> ASRTranscriptionResult {
