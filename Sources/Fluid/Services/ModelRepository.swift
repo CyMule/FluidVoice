@@ -34,7 +34,7 @@ final class ModelRepository {
 
         switch providerID {
         case "openai":
-            return ["gpt-4.1"]
+            return ["gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra", "gpt-5-mini", "gpt-4.1-mini", "gpt-4.1"]
         case "anthropic":
             return ["claude-sonnet-4-20250514"]
         case "xai":
@@ -53,6 +53,30 @@ final class ModelRepository {
         default:
             // Custom providers start with no default models; user must add them
             return []
+        }
+    }
+
+    /// The OpenAI catalogue also contains audio, image, embedding, realtime,
+    /// and endpoint-specific models that cannot clean up a dictation transcript.
+    static func openAITextModels(from models: [String]) -> [String] {
+        let excluded = ["audio", "realtime", "transcribe", "tts", "image", "embedding", "search", "deep-research", "instruct", "codex", "-pro", "gpt-3.5"]
+        let eligible = Set(models.filter { id in
+            let lower = id.lowercased()
+            return (lower.hasPrefix("gpt-") || lower.hasPrefix("o1") || lower.hasPrefix("o3") || lower.hasPrefix("o4"))
+                && !excluded.contains { lower.contains($0) }
+        })
+        let recommended = ["gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra", "gpt-5-mini", "gpt-4.1-mini", "gpt-4.1"]
+        let ranks = Dictionary(uniqueKeysWithValues: recommended.enumerated().map { ($0.element, $0.offset) })
+        // Prefer a maintained alias over a wall of historical dated snapshots.
+        // Keep snapshots when the account has no corresponding alias.
+        let displayed = eligible.filter { id in
+            guard let dateRange = id.range(of: "-[0-9]{4}-[0-9]{2}-[0-9]{2}$", options: .regularExpression) else { return true }
+            return !eligible.contains(String(id[..<dateRange.lowerBound]))
+        }
+        return displayed.sorted { lhs, rhs in
+            let left = ranks[lhs] ?? recommended.count
+            let right = ranks[rhs] ?? recommended.count
+            return left == right ? lhs.localizedStandardCompare(rhs) == .orderedDescending : left < right
         }
     }
 
@@ -316,7 +340,7 @@ final class ModelRepository {
                 "fetchModels: Found \(models.count) models for '\(providerID)' (OpenAI format)",
                 source: "ModelRepository"
             )
-            return models.sorted()
+            return providerID == "openai" ? Self.openAITextModels(from: models) : models.sorted()
         }
 
         // Try Google format: { "models": [{ "name": "models/gemini-pro" }, ...] }

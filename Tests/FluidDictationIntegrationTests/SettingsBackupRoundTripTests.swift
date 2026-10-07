@@ -4,6 +4,20 @@ import XCTest
 
 @MainActor
 final class SettingsBackupRoundTripTests: XCTestCase {
+    func testFollowSystemMicrophoneModeSurvivesBackupRestore() throws {
+        try self.withSavedDefaults {
+            let settings = SettingsStore.shared
+            settings.recordInputDeviceSelection("usb", name: "USB microphone")
+            settings.microphoneSelectionMode = .followSystem
+            let payload = settings.makeBackupPayload()
+            let restored = try JSONDecoder().decode(SettingsBackupPayload.self, from: JSONEncoder().encode(payload))
+            settings.microphoneSelectionMode = .manual
+            settings.restore(from: restored, promptProfiles: settings.dictationPromptProfiles, appPromptBindings: [])
+            XCTAssertEqual(settings.microphoneSelectionMode, .followSystem)
+            XCTAssertEqual(settings.microphoneSelectionMigrationVersion, SettingsStore.microphonePriorityMigrationVersion)
+        }
+    }
+
     func testModernBackupExportsAndRestoresMeetingIdleAndPromptConfiguration() throws {
         try self.withSavedDefaults {
             let settings = SettingsStore.shared

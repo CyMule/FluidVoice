@@ -220,7 +220,15 @@ struct SettingsView: View {
             searchScrollTarget: self.selectedSectionSearchResults.first?.target,
             searchScrollRequest: self.searchScrollRequest
         ) {
-            VStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(self.selectedSection.title)
+                        .font(.system(size: 26, weight: .semibold))
+                    Text(self.selectedSection.summary)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.bottom, 4)
                 // App Settings Card
                 ThemedCard(style: .standard) {
                     VStack(alignment: .leading, spacing: 14) {
@@ -380,6 +388,23 @@ struct SettingsView: View {
 
                             Divider().opacity(0.2)
 
+                            if Bundle.main.object(forInfoDictionaryKey: "FluidPersonalBuild") as? Bool == true {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Label("Personal build", systemImage: "hammer")
+                                        .font(self.theme.typography.bodyStrong)
+                                    Text("Built from CyMule/FluidVoice · \(self.currentAppVersion)")
+                                        .font(self.theme.typography.bodySmall)
+                                        .foregroundStyle(.secondary)
+                                    Text("Includes FlipMic support. Update by rebuilding your fork; upstream binary updates are disabled.")
+                                        .font(self.theme.typography.bodySmall)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Link("Open your repository", destination: URL(string: "https://github.com/CyMule/FluidVoice")!)
+                                        .font(self.theme.typography.bodySmall)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .settingsSearchTarget(.automaticUpdates)
+                            } else {
                             // Automatic Updates
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack(alignment: .center) {
@@ -569,6 +594,7 @@ struct SettingsView: View {
                                 Text("Rollback target: \(self.rollbackVersion)")
                                     .font(self.theme.typography.bodySmall)
                                     .foregroundStyle(self.settingsSecondaryText)
+                            }
                             }
                         }
                     }
@@ -1629,7 +1655,7 @@ struct SettingsView: View {
                 .shownInSettingsSection(.experimental, selectedSection: self.selectedSection)
             }
             .padding(.bottom, 28)
-            .fluidPageContent(width: .expanding)
+            .fluidPageContent(width: .reading)
             .settingsSearchTarget(self.selectedSection.searchTarget)
             .environment(\.settingsSearchPresentation, self.settingsSearchPresentation)
         }
@@ -2424,6 +2450,48 @@ private extension SettingsView {
     }
 
     var microphonePrioritySection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Picker("Microphone selection", selection: Binding(
+                get: { self.settings.microphoneSelectionMode == .followSystem ? SettingsStore.MicrophoneSelectionMode.followSystem : .manual },
+                set: { mode in
+                    self.settings.microphoneSelectionMode = mode
+                    self.settings.microphoneSelectionMigrationVersion = SettingsStore.microphonePriorityMigrationVersion
+                    self.refreshActiveInputSelection()
+                }
+            )) {
+                Text("Follow System Default").tag(SettingsStore.MicrophoneSelectionMode.followSystem)
+                Text("FluidVoice Priority").tag(SettingsStore.MicrophoneSelectionMode.manual)
+            }
+            .pickerStyle(.segmented)
+            .disabled(self.isMicrophonePriorityEditingDisabled)
+            .onChange(of: self.microphonePreferenceCoordinator.systemDefaultInputUID) { _, uid in
+                self.cachedDefaultInputUID = uid ?? ""
+            }
+
+            if self.settings.microphoneSelectionMode == .followSystem {
+                HStack(spacing: 12) {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 22))
+                        .foregroundStyle(self.theme.palette.accent)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(self.inputDevices.first { $0.uid == self.cachedDefaultInputUID }?.name ?? "macOS default microphone")
+                            .font(self.theme.typography.bodyStrong)
+                        Text("FlipMic controls the microphone. FluidVoice follows the macOS input at the start of each recording.")
+                            .font(self.theme.typography.bodySmall)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(14)
+                .background(self.theme.palette.accent.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+            } else {
+                self.appMicrophonePrioritySection
+            }
+        }
+    }
+
+    var appMicrophonePrioritySection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Input Device Priority")
@@ -2477,7 +2545,7 @@ private extension SettingsView {
             )
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            Text("FluidVoice tries microphones from top to bottom. Drag to reorder; unavailable devices keep their place.")
+            Text("Drag to reorder. Removing a microphone excludes it from this mode. Use Follow System Default to let FlipMic choose instead.")
                 .font(self.theme.typography.bodySmall)
                 .foregroundStyle(self.settingsSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)

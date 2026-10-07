@@ -33,7 +33,6 @@ struct ThemedCard<Content: View>: View {
 
         self.content
             .padding(self.padding ?? self.theme.metrics.cardSurface.defaultPadding)
-            .background(configuration.material, in: shape)
             .background(
                 shape
                     .fill(configuration.background)
@@ -44,14 +43,6 @@ struct ThemedCard<Content: View>: View {
                             ),
                             lineWidth: configuration.borderWidth
                         )
-                    )
-                    .shadow(
-                        color: configuration.shadow.color.opacity(
-                            self.isHovered && self.hoverEffect ? min(configuration.shadow.opacity + configuration.hoverShadowBoost, 1.0) : configuration.shadow.opacity
-                        ),
-                        radius: configuration.shadow.radius,
-                        x: configuration.shadow.x,
-                        y: self.isHovered && self.hoverEffect ? configuration.shadow.y + 1 : configuration.shadow.y
                     )
             )
             .scaleEffect(self.isHovered && self.hoverEffect ? 1.01 : 1.0)
@@ -72,10 +63,7 @@ private extension ThemedCard {
         let borderOpacity: Double
         let hoverBorderOpacity: Double
         let borderWidth: CGFloat
-        let material: Material
         let cornerRadius: CGFloat
-        let shadow: AppTheme.Metrics.Shadow
-        let hoverShadowBoost: Double
 
         init(style: ThemedCardStyle, theme: AppTheme) {
             let cardSurface = theme.metrics.cardSurface
@@ -86,29 +74,22 @@ private extension ThemedCard {
                 variant = cardSurface.standard
                 self.background = theme.palette.cardBackground
                 self.border = theme.palette.cardBorder
-                self.material = theme.materials.card
                 self.cornerRadius = theme.metrics.corners.lg
-                self.shadow = theme.metrics.cardShadow
             case .prominent:
                 variant = cardSurface.prominent
                 self.background = theme.palette.elevatedCardBackground
                 self.border = theme.palette.accent
-                self.material = theme.materials.elevatedCard
                 self.cornerRadius = theme.metrics.corners.lg
-                self.shadow = theme.metrics.elevatedCardShadow
             case .subtle:
                 variant = cardSurface.subtle
                 self.background = theme.palette.contentBackground
                 self.border = theme.palette.cardBorder
-                self.material = theme.materials.card
                 self.cornerRadius = theme.metrics.corners.md
-                self.shadow = theme.metrics.cardShadow
             }
 
             self.borderOpacity = variant.borderOpacity
             self.hoverBorderOpacity = variant.hoverBorderOpacity
             self.borderWidth = variant.borderWidth
-            self.hoverShadowBoost = variant.hoverShadowBoost
         }
     }
 }

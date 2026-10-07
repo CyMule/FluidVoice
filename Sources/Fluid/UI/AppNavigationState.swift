@@ -81,6 +81,20 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    var summary: String {
+        switch self {
+        case .general: return "Make FluidVoice fit your daily workflow."
+        case .dictation: return "Choose how recordings become text."
+        case .dictationFormatting: return "Keep punctuation, spacing, and vocabulary consistent."
+        case .shortcuts: return "Start, stop, and edit without leaving your current app."
+        case .notifications: return "Choose which updates need your attention."
+        case .audio: return "Let FlipMic manage your microphone, or set an app-specific priority."
+        case .overlay: return "A quiet recording indicator that stays out of your way."
+        case .dataAndDiagnostics: return "Manage local history, backups, and diagnostics."
+        case .experimental: return "Try optional features at your own pace."
+        }
+    }
+
     var systemImage: String {
         switch self {
         case .general: return "gearshape"

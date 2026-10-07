@@ -387,11 +387,19 @@ final class SimpleUpdater: ObservableObject {
     }
 
     func checkForUpdatesAutomatically() {
+        guard Bundle.main.object(forInfoDictionaryKey: "FluidPersonalBuild") as? Bool != true else { return }
         guard self.updateDefaults.object(forKey: SettingsStore.UpdateKeys.autoUpdateCheckEnabled) as? Bool ?? true else { return }
         self.startUpdateCheck(explicit: false)
     }
 
     func checkForUpdatesManually() {
+        if Bundle.main.object(forInfoDictionaryKey: "FluidPersonalBuild") as? Bool == true {
+            let alert = NSAlert()
+            alert.messageText = "Your personal FluidVoice build"
+            alert.informativeText = "This version is built from CyMule/FluidVoice. Rebuild your fork to update it and keep FlipMic support."
+            alert.runModal()
+            return
+        }
         self.startUpdateCheck(explicit: true)
     }
 

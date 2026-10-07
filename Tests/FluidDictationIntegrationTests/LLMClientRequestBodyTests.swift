@@ -8,6 +8,24 @@ import XCTest
 
 @MainActor
 final class LLMClientRequestBodyTests: XCTestCase {
+    func testOpenAIModelPickerShowsTextModelsAndRanksCurrentAliases() {
+        let models = ModelRepository.openAITextModels(from: [
+            "gpt-4.1", "gpt-6-luna", "gpt-6.1-sol", "gpt-6-luna", "gpt-6-luna-2026-09-22", "gpt-3.5-turbo",
+            "gpt-4o-realtime-preview", "gpt-4o-mini-transcribe", "gpt-image-1",
+            "text-embedding-3-small", "whisper-1", "gpt-5-codex", "o3-deep-research",
+            "gpt-5-pro", "gpt-4o-search-preview", "gpt-4.1-mini", "o4-mini", "gpt-5-mini-2025-08-07",
+        ])
+        XCTAssertEqual(Array(models.prefix(2)), ["gpt-6-luna", "gpt-6.1-sol"])
+        XCTAssertEqual(Set(models), Set(["gpt-6-luna", "gpt-6.1-sol", "gpt-4.1", "gpt-4.1-mini", "o4-mini", "gpt-5-mini-2025-08-07"]))
+    }
+
+    func testCurrentOpenAIModelsDefaultToLowReasoning() {
+        for model in ["gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra"] {
+            XCTAssertEqual(SettingsStore.shared.getReasoningConfig(forModel: model, provider: "openai")?.parameterValue, "low")
+            XCTAssertTrue(SettingsStore.shared.isTemperatureUnsupported(model))
+        }
+    }
+
     func testDictationStreamingFallbackSkipsTransportFailuresAndCancellation() {
         XCTAssertFalse(
             DictationStreamingFallbackPolicy.shouldRetryWithoutStreaming(

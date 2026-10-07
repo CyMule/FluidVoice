@@ -3460,6 +3460,38 @@ final class HotkeyShortcutTests: XCTestCase {
     }
 
     @MainActor
+    func testFollowSystemTracksFlipMicAndIgnoresAppExclusions() throws {
+        try self.withRestoredDefaults(keys: [
+            self.microphoneSelectionModeKey, self.preferredInputDeviceUIDKey,
+            self.microphoneSelectionMigrationVersionKey,
+            "MicrophonePriority", "SuppressedMicrophoneUIDs",
+        ]) {
+            let internalMic = Self.device(uid: "internal", name: "MacBook Pro Microphone", transportType: kAudioDeviceTransportTypeBuiltIn)
+            let usbMic = Self.device(uid: "usb", name: "USB microphone")
+            let devices = FakeAudioDeviceManager(inputs: [internalMic, usbMic], defaultInputUID: "internal")
+            let settings = SettingsStore.shared
+            settings.recordInputDeviceSelection("usb", name: usbMic.name)
+            settings.suppressedMicrophoneUIDs = ["internal"]
+            settings.microphoneSelectionMode = .followSystem
+            settings.microphoneSelectionMigrationVersion = 0
+            let coordinator = MicrophonePreferenceCoordinator(settings: settings, devices: devices)
+            coordinator.migrateMicrophonePriorityIfNeeded()
+            XCTAssertEqual(settings.microphoneSelectionMode, .followSystem)
+            XCTAssertEqual(coordinator.inputDeviceForCapture()?.uid, "internal")
+            devices.defaultInputUID = "usb"
+            XCTAssertEqual(coordinator.inputDeviceForCapture()?.uid, "usb")
+            // Failed/disconnected defaults can fall back, without changing the system input.
+            XCTAssertEqual(coordinator.inputDeviceForCapture(availableInputs: [internalMic], defaultInputUID: "usb")?.uid, "internal")
+            XCTAssertEqual(coordinator.inputDeviceForCapture(availableInputs: [internalMic, usbMic], defaultInputUID: "usb", excluding: ["usb"])?.uid, "internal")
+            XCTAssertNil(coordinator.inputDeviceForCapture(availableInputs: [], defaultInputUID: "usb"))
+            XCTAssertEqual(devices.defaultInputUID, "usb")
+            settings.microphoneSelectionMode = .manual
+            XCTAssertFalse(coordinator.isInputDeviceAvailable(internalMic))
+            XCTAssertEqual(coordinator.inputDeviceForCapture()?.uid, "usb")
+        }
+    }
+
+    @MainActor
     func testLegacySystemModeSeedsPriorityFromCurrentDefault() throws {
         try self.withRestoredDefaults(keys: [
             self.microphoneSelectionModeKey,

@@ -1,5 +1,13 @@
 # FluidVoice
 
+## Personal build (CyMule)
+
+This fork follows current upstream and adds **Settings → Audio → Follow System Default** for FlipMic. In this mode, FluidVoice follows the macOS microphone, ignores app-specific priorities and removals, and responds to default-input changes. The separate **FluidVoice Priority** mode retains its own ordering and exclusions.
+
+Settings use a readable column, clear section headings, and flat cards. OpenAI enhancement includes current GPT defaults, filters non-text models from fetched and cached lists, and uses upstream’s Responses API support for GPT-5/GPT-6. API models remain subject to your account’s access; select **Fetch Models** and verify a model with a valid key. The environment key used during development returned `401 invalid_api_key`, so live completions were not verified. No credentials are included in this repository.
+
+Build a signed local replacement with `FLUIDVOICE_CONFIGURATION=Release ./build.sh`. The app is written to `DerivedData/Build/Products/Release/FluidVoice.app`. Personal builds disable analytics uploads and do not offer upstream binary updates, which would replace these changes.
+
 <p align="center">
   <a href="https://github.com/altic-dev/FluidVoice/stargazers"><img src="https://img.shields.io/github/stars/altic-dev/FluidVoice?style=social" alt="GitHub stars"/></a>
   <a href="https://github.com/sponsors/altic-dev"><img src="https://img.shields.io/badge/Sponsor-GitHub%20Sponsors-ea4aaa?logo=githubsponsors&logoColor=white" alt="Sponsor FluidVoice"/></a>

@@ -46,7 +46,13 @@ final class KeychainService {
         #if FLUID_ASR_BASELINE
         fatalError("KeychainService is unavailable in the ASR baseline host")
         #endif
-        self.testingBackend = nil
+        // XCTest's app host must not read the user's real provider credentials
+        // or block its main thread on a login-keychain authorization dialog.
+        let environment = ProcessInfo.processInfo.environment
+        let isTestHost = environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCTestBundlePath"] != nil
+            || environment["XCTestSessionIdentifier"] != nil
+        self.testingBackend = isTestHost ? TestingBackend(load: { [:] }, save: { _ in }) : nil
     }
 
     init(

@@ -190,7 +190,8 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
             } else {
                 newKey = key.hasPrefix("custom:") ? key : "custom:\(key)"
             }
-            let clean = Array(Set(models.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })).sorted()
+            let trimmed = models.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            let clean = newKey == "openai" ? ModelRepository.openAITextModels(from: trimmed) : Array(Set(trimmed)).sorted()
             if !clean.isEmpty { normalized[newKey] = clean }
         }
         self.availableModelsByProvider = normalized
@@ -907,7 +908,7 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
                 "model": trimmedModel,
                 "input": "test",
                 "store": false,
-                "max_output_tokens": 50,
+                "max_output_tokens": 1024,
             ]
 
             if let config = reasoningConfig, config.isEnabled {

@@ -5422,8 +5422,12 @@ final class ASRService: ObservableObject {
     }
 
     private func handleDefaultInputChanged() {
-        // Microphone priority is app-owned. A macOS default-input change must
-        // never move or restart FluidVoice's selected microphone.
+        guard SettingsStore.shared.microphoneSelectionMode == .followSystem else { return }
+        self.scheduleAudioRouteRecovery(
+            reason: "system microphone changed (FlipMic)",
+            requiresIdlePrewarm: true,
+            reconcilesInputSelection: true
+        )
     }
 
     private func handleDefaultOutputChanged() {

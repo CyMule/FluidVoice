@@ -230,8 +230,9 @@ final class SettingsStore: ObservableObject {
     }
 
     enum MicrophoneSelectionMode: String, Codable, CaseIterable, Identifiable {
-        case system
+        case system // Legacy migration value.
         case manual
+        case followSystem
 
         var id: String {
             self.rawValue
@@ -239,10 +240,10 @@ final class SettingsStore: ObservableObject {
 
         var displayName: String {
             switch self {
-            case .system:
-                return "Use macOS Default"
+            case .system, .followSystem:
+                return "Follow System Default"
             case .manual:
-                return "Use Preferred Microphone"
+                return "FluidVoice Priority"
             }
         }
     }
@@ -3306,6 +3307,10 @@ final class SettingsStore: ObservableObject {
         // Apply smart defaults for known model patterns
         let modelLower = model.lowercased()
 
+        // Low reasoning keeps short dictation cleanup responsive on current GPT models.
+        if modelLower.hasPrefix("gpt-6") {
+            return .openAIGPT5
+        }
         // OpenAI gpt-5.x models
         if modelLower.hasPrefix("gpt-5") || modelLower.contains("gpt-5.") {
             return .openAIGPT5
@@ -3631,9 +3636,7 @@ final class SettingsStore: ObservableObject {
             microphonePriority: self.microphonePriority,
             suppressedMicrophoneUIDs: self.suppressedMicrophoneUIDs.sorted(),
             preferredOutputDeviceUID: self.preferredOutputDeviceUID,
-            // Kept in the backup schema for compatibility with older builds.
-            // Current builds always resolve microphones from the priority list.
-            microphoneSelectionMode: .manual,
+            microphoneSelectionMode: self.microphoneSelectionMode,
             visualizerNoiseThreshold: self.visualizerNoiseThreshold,
             overlayPosition: self.overlayPosition,
             overlayBottomOffset: self.overlayBottomOffset,
@@ -3808,7 +3811,10 @@ final class SettingsStore: ObservableObject {
             self.microphonePriority = []
         }
         self.preferredOutputDeviceUID = payload.preferredOutputDeviceUID
-        if payload.microphonePriority != nil {
+        if payload.microphoneSelectionMode == .followSystem {
+            self.microphoneSelectionMode = .followSystem
+            self.microphoneSelectionMigrationVersion = Self.microphonePriorityMigrationVersion
+        } else if payload.microphonePriority != nil {
             self.microphoneSelectionMode = .manual
             self.microphoneSelectionMigrationVersion = Self.microphonePriorityMigrationVersion
         } else if payload.microphoneSelectionMode == .system {

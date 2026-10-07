@@ -42,6 +42,7 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
     private var lastConfirmedInputUID: String?
     private var lastConfirmedInputName: String?
     @Published private(set) var confirmedActiveInputUID: String?
+    @Published private(set) var systemDefaultInputUID: String?
     private var startupNoticeTask: Task<Void, Never>?
     private var startupNoticeEligibilityEnabled = false
     private var didPresentStartupNotice = false
@@ -72,6 +73,10 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
         availableInputs: [AudioDevice.Device],
         defaultInputUID: String?
     ) {
+        if self.settings.microphoneSelectionMode == .followSystem {
+            self.settings.microphoneSelectionMigrationVersion = SettingsStore.microphonePriorityMigrationVersion
+            return
+        }
         guard self.needsMicrophonePriorityMigration else {
             self.settings.reconcileMicrophonePriority(with: availableInputs)
             return
@@ -205,6 +210,7 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
             availableInputs: availableInputs,
             defaultInputUID: defaultInputUID
         )
+        self.systemDefaultInputUID = defaultInputUID
         let selectedInput = self.inputDeviceForCapture(
             availableInputs: availableInputs,
             defaultInputUID: defaultInputUID
@@ -353,6 +359,12 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
         }
         guard usableInputs.isEmpty == false else { return nil }
 
+        // Resolve live HAL state on every capture and hardware change. FlipMic
+        // owns the system default; app priorities must never override it here.
+        if self.settings.microphoneSelectionMode == .followSystem {
+            return self.fallbackInput(from: usableInputs, defaultInputUID: defaultInputUID)
+        }
+
         for entry in self.settings.microphonePriority {
             if let input = usableInputs.first(where: { $0.uid == entry.uid }) {
                 return input
@@ -413,7 +425,10 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
         _ device: AudioDevice.Device,
         clamshellClosed: Bool
     ) -> Bool {
-        guard self.settings.suppressedMicrophoneUIDs.contains(device.uid) == false else { return false }
+        if self.settings.microphoneSelectionMode != .followSystem,
+           self.settings.suppressedMicrophoneUIDs.contains(device.uid) {
+            return false
+        }
         guard clamshellClosed == false || device.isUnavailableWhenClamshellClosed == false else { return false }
         return self.devices.isInputDeviceUsable(device)
     }

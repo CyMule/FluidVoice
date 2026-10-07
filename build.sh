@@ -15,6 +15,12 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROFILE="${1:-${BUILD_PROFILE:-public}}"
 PRIVATE_FI_BUILD_SCRIPT="${PROJECT_DIR}/build_with_FI_incremental.sh"
 DERIVED_DATA_PATH="${FLUIDVOICE_DERIVED_DATA_PATH:-${PROJECT_DIR}/DerivedData}"
+CONFIGURATION="${FLUIDVOICE_CONFIGURATION:-Debug}"
+case "${CONFIGURATION}" in
+    Debug) APP_NAME="FluidVoice Debug" ;;
+    Release) APP_NAME="FluidVoice" ;;
+    *) echo "FLUIDVOICE_CONFIGURATION must be Debug or Release" >&2; exit 1 ;;
+esac
 
 resolve_development_team() {
     local identity
@@ -72,7 +78,7 @@ run_public_build() {
     local -a build_args=(
         -project Fluid.xcodeproj
         -scheme Fluid
-        -configuration Debug
+        -configuration "${CONFIGURATION}"
         -destination 'platform=macOS'
         -derivedDataPath "${DERIVED_DATA_PATH}"
         build
@@ -121,10 +127,10 @@ EOF
     fi
 
     echo "Running signed public FluidVoice build..."
-    echo "Build product: ${DERIVED_DATA_PATH}/Build/Products/Debug/FluidVoice Debug.app"
+    echo "Build product: ${DERIVED_DATA_PATH}/Build/Products/${CONFIGURATION}/${APP_NAME}.app"
     xcodebuild "${build_args[@]}" DEVELOPMENT_TEAM="${development_team}"
 
-    app_path="${DERIVED_DATA_PATH}/Build/Products/Debug/FluidVoice Debug.app"
+    app_path="${DERIVED_DATA_PATH}/Build/Products/${CONFIGURATION}/${APP_NAME}.app"
     ctranscribe_framework="${app_path}/Contents/Frameworks/CTranscribe.framework"
     if [ ! -d "${app_path}" ]; then
         echo "Signed build product is missing: ${app_path}" >&2
