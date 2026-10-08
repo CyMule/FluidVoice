@@ -34,6 +34,8 @@ final class BottomOverlayWindowController {
     private var globalMouseDownMonitor: Any?
     private var targetScreen: NSScreen?
     private var isDragging = false
+    private var resizeStartFrame: CGRect?
+    private var resizeStartPointer: CGPoint?
     private var dragCompletionTimer: Timer?
     private var releaseTransitionActiveUntil: Date?
     private var deferredResizePending = false
@@ -52,6 +54,8 @@ final class BottomOverlayWindowController {
         self.dragCompletionTimer?.invalidate()
         self.dragCompletionTimer = nil
         self.isDragging = false
+        self.resizeStartFrame = nil
+        self.resizeStartPointer = nil
         self.pendingResizeWorkItem?.cancel()
         self.pendingResizeWorkItem = nil
         self.pendingIgnoreMouseWorkItem?.cancel()
@@ -624,7 +628,8 @@ final class BottomOverlayWindowController {
         guard let window = window, let hostingView = window.contentView as? NSHostingView<BottomOverlayView> else { return }
 
         // Re-calculate fitting size for the new layout constants
-        let newSize = hostingView.fittingSize
+        let customSize = SettingsStore.shared.overlayCustomSize
+        let newSize = customSize.map { CGSize(width: $0.width, height: $0.height) } ?? hostingView.fittingSize
         trace.mark("fittingSize")
 
         // Avoid redundant content-size updates while AppKit is already resolving constraints.
@@ -636,7 +641,9 @@ final class BottomOverlayWindowController {
         if widthChanged || heightChanged {
             // Resize from the current origin to avoid AppKit's default top-left anchoring,
             // which can visually push the overlay down before we re-position it.
-            let currentOrigin = window.frame.origin
+            let currentOrigin = self.resizeStartFrame.map {
+                CGPoint(x: $0.minX, y: $0.maxY - newSize.height)
+            } ?? window.frame.origin
             let resizedFrame = NSRect(origin: currentOrigin, size: newSize)
             window.setFrame(resizedFrame, display: false)
         }
@@ -753,7 +760,7 @@ final class BottomOverlayWindowController {
         guard NotchContentState.shared.isBottomOverlayPresented else { return }
         (window as? BottomOverlayPanel)?.allowsOffscreenParking = false
 
-        guard !self.isDragging else { return }
+        guard !self.isDragging, self.resizeStartFrame == nil else { return }
         let saved = SettingsStore.shared.overlayPlacement
         let savedScreen = NSScreen.screens.first { Self.displayID(for: $0) == saved?.displayID }
         let screen = savedScreen ?? self.targetScreen ?? window.screen ?? OverlayScreenResolver.screenForCurrentPointer()
@@ -814,6 +821,36 @@ final class BottomOverlayWindowController {
             self.deferredResizePending = false
             self.updateSizeAndPosition()
         }
+        self.saveCurrentPlacement()
+    }
+
+    func beginResizing(at pointer: CGPoint) {
+        guard let window else { return }
+        if SettingsStore.shared.overlaySize != .small { SettingsStore.shared.overlaySize = .small }
+        self.resizeStartFrame = window.frame
+        self.resizeStartPointer = pointer
+        self.pendingResizeWorkItem?.cancel()
+    }
+
+    func resize(to pointer: CGPoint) {
+        guard let frame = self.resizeStartFrame, let start = self.resizeStartPointer else { return }
+        SettingsStore.shared.overlayCustomSize = .init(
+            width: frame.width + pointer.x - start.x,
+            height: frame.height - pointer.y + start.y
+        )
+        self.updateSizeAndPosition()
+    }
+
+    func finishResizing() {
+        guard self.resizeStartFrame != nil else { return }
+        self.updateSizeAndPosition()
+        self.resizeStartFrame = nil
+        self.resizeStartPointer = nil
+        self.saveCurrentPlacement()
+        self.positionWindow()
+    }
+
+    private func saveCurrentPlacement() {
         guard NotchContentState.shared.isBottomOverlayPresented, let window, let screen = window.screen else { return }
         let visible = screen.visibleFrame
         guard visible.width > 0, visible.height > 0 else { return }
@@ -2441,6 +2478,35 @@ private final class OverlayDragGripView: NSView {
     }
 }
 
+private struct OverlayResizeGrip: NSViewRepresentable {
+    func makeNSView(context: Context) -> OverlayResizeGripView { OverlayResizeGripView() }
+    func updateNSView(_ nsView: OverlayResizeGripView, context: Context) {}
+}
+
+private final class OverlayResizeGripView: NSView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.secondaryLabelColor.withAlphaComponent(0.7).setStroke()
+        let path = NSBezierPath()
+        for offset in [CGFloat(0), 4, 8] {
+            path.move(to: CGPoint(x: bounds.maxX - 12 + offset, y: 3))
+            path.line(to: CGPoint(x: bounds.maxX - 3, y: 12 - offset))
+        }
+        path.lineWidth = 1.5
+        path.stroke()
+    }
+    override func mouseDown(with event: NSEvent) {
+        BottomOverlayWindowController.shared.beginResizing(at: NSEvent.mouseLocation)
+    }
+    override func mouseDragged(with event: NSEvent) {
+        BottomOverlayWindowController.shared.resize(to: NSEvent.mouseLocation)
+    }
+    override func mouseUp(with event: NSEvent) {
+        BottomOverlayWindowController.shared.resize(to: NSEvent.mouseLocation)
+        BottomOverlayWindowController.shared.finishResizing()
+    }
+}
+
 private struct DynamicPreviewHeightPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
@@ -2858,7 +2924,8 @@ struct BottomOverlayView: View {
     }
 
     private var previewMaxHeight: CGFloat {
-        self.layout.usesFixedCanvas ? self.layout.previewBoxHeight : self.layout.transFontSize * 4.2
+        if let custom = self.settings.overlayCustomSize, !self.isPillSize { return max(16, CGFloat(custom.height) - 80) }
+        return self.layout.usesFixedCanvas ? self.layout.previewBoxHeight : self.layout.transFontSize * 4.2
     }
 
     private var shouldReservePreviewArea: Bool {
@@ -2871,11 +2938,13 @@ struct BottomOverlayView: View {
     }
 
     private var overlayFrameHeight: CGFloat? {
+        if let custom = self.settings.overlayCustomSize, !self.isPillSize { return CGFloat(custom.height) }
         guard self.layout.usesFixedCanvas else { return nil }
         return self.shouldReservePreviewArea ? self.layout.overlayHeight : nil
     }
 
     private var previewMaxWidth: CGFloat {
+        if let custom = self.settings.overlayCustomSize, !self.isPillSize { return CGFloat(custom.width) - self.layout.hPadding * 2 }
         if self.layout.usesFixedCanvas {
             return self.layout.waveformWidth * 2.2
         }
@@ -3771,6 +3840,7 @@ struct BottomOverlayView: View {
                 maxWidth: self.isPillSize ? nil : .infinity,
                 alignment: .center
             )
+            .frame(maxHeight: self.settings.overlayCustomSize != nil && !self.isPillSize ? .infinity : nil, alignment: .top)
             .bottomOverlaySurface(
                 self.settings.bottomOverlayAppearance,
                 cornerRadius: self.layout.cornerRadius,
@@ -3842,10 +3912,19 @@ struct BottomOverlayView: View {
         .frame(
             width: self.isPillSize
                 ? PillShadowMetrics.canvasWidth
-                : (self.layout.usesFixedCanvas ? self.layout.overlayWidth : self.layout.containerWidth),
+                : (self.settings.overlayCustomSize.map { CGFloat($0.width) } ?? (self.layout.usesFixedCanvas ? self.layout.overlayWidth : self.layout.containerWidth)),
             height: self.overlayFrameHeight,
             alignment: .top
         )
+        .overlay(alignment: .bottomTrailing) {
+            if !self.isPillSize {
+                OverlayResizeGrip()
+                    .frame(width: 20, height: 20)
+                    .padding(3)
+                    .help("Drag to resize the preview. Murmur remembers its size.")
+                    .accessibilityLabel("Resize transcription preview")
+            }
+        }
         // Reserve space around the pill so its drop shadow isn't clipped by the (content-sized) window.
         .padding(self.isPillSize ? 26 : 0)
         .onChange(of: self.contentState.isBottomOverlayPresented) { _, presented in

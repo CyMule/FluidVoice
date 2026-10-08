@@ -6,7 +6,7 @@ Murmur is your personal build of FluidVoice, with a distinct macOS identity (`de
 
 Settings use a readable column, clear section headings, and flat cards. OpenAI enhancement includes current GPT defaults, filters non-text models from fetched and cached lists, and uses upstream’s Responses API support for GPT-5/GPT-6. API models remain subject to your account’s access; select **Fetch Models** and verify a model with a valid key. The environment key used during development returned `401 invalid_api_key`, so live completions were not verified. No credentials are included in this repository.
 
-The transcription preview defaults to Small (220 pt wide). Drag its top grip to move it; Murmur remembers the screen and position across recordings and restarts. Overlay settings include Reset Position, and backups preserve the placement.
+The transcription preview defaults to Small (220 pt wide). Drag its top grip to move it or its bottom-right corner to resize it; Murmur remembers the screen, position, width, and height across recordings and restarts. Overlay settings include Reset Position, and backups preserve the placement.
 
 Build a signed local replacement with `FLUIDVOICE_CONFIGURATION=Release ./build.sh`. The app is written to `DerivedData/Build/Products/Release/Murmur.app`. Personal builds disable analytics uploads and do not offer upstream binary updates, which would replace these changes.
 

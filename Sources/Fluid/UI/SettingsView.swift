@@ -1406,7 +1406,7 @@ struct SettingsView: View {
                                 Divider().padding(.vertical, 4)
 
                                 HStack {
-                                    Text("Drag the grip on the preview to move it. Its position is saved between recordings.")
+                                    Text("Drag the top grip to move or the bottom-right corner to resize. Both are saved.")
                                         .font(self.theme.typography.bodySmall)
                                         .foregroundStyle(self.settingsSecondaryText)
                                     Spacer()
@@ -1421,6 +1421,16 @@ struct SettingsView: View {
                                     .disabled(self.asr.isRunningOrStarting || NotchContentState.shared.isProcessing)
                                     Button("Reset Position") { self.settings.overlayPlacement = nil }
                                         .disabled(self.settings.overlayPlacement == nil)
+                                }
+
+                                if let custom = self.settings.overlayCustomSize {
+                                    HStack {
+                                        Text("Custom size: \(Int(custom.width)) × \(Int(custom.height))")
+                                            .font(self.theme.typography.bodySmall)
+                                            .foregroundStyle(self.settingsSecondaryText)
+                                        Spacer()
+                                        Button("Reset Size") { self.settings.overlayCustomSize = nil }
+                                    }
                                 }
 
                                 // Bottom Offset

@@ -2440,6 +2440,30 @@ final class SettingsStore: ObservableObject {
         let y: Double
     }
 
+    struct OverlayCustomSize: Codable, Equatable {
+        let width: Double
+        let height: Double
+        var clamped: Self {
+            guard self.width.isFinite, self.height.isFinite else { return .init(width: 220, height: 96) }
+            return .init(width: min(max(self.width, 180), 600), height: min(max(self.height, 96), 360))
+        }
+    }
+
+    var overlayCustomSize: OverlayCustomSize? {
+        get {
+            guard let data = self.defaults.data(forKey: "MurmurOverlayCustomSize"),
+                  let value = try? JSONDecoder().decode(OverlayCustomSize.self, from: data) else { return nil }
+            return value.clamped
+        }
+        set {
+            objectWillChange.send()
+            if let newValue, let data = try? JSONEncoder().encode(newValue.clamped) {
+                self.defaults.set(data, forKey: "MurmurOverlayCustomSize")
+            } else { self.defaults.removeObject(forKey: "MurmurOverlayCustomSize") }
+            NotificationCenter.default.post(name: NSNotification.Name("OverlaySizeChanged"), object: nil)
+        }
+    }
+
     var overlayPlacement: OverlayPlacement? {
         get {
             guard let data = self.defaults.data(forKey: "MurmurOverlayPlacement"),
@@ -2487,6 +2511,7 @@ final class SettingsStore: ObservableObject {
         set {
             objectWillChange.send()
             self.defaults.set(newValue.rawValue, forKey: Keys.overlaySize)
+            self.defaults.removeObject(forKey: "MurmurOverlayCustomSize")
 
             // Post notification for live update if overlay is visible
             NotificationCenter.default.post(name: NSNotification.Name("OverlaySizeChanged"), object: nil)
@@ -3684,6 +3709,7 @@ final class SettingsStore: ObservableObject {
             overlayBottomOffset: self.overlayBottomOffset,
             overlayPlacement: self.overlayPlacement,
             overlaySize: self.overlaySize,
+            overlayCustomSize: self.overlayCustomSize,
             overlayMaterial: self.overlayMaterial,
             overlayGlassOpacity: self.overlayGlassOpacity,
             overlayTint: self.overlayTint,
@@ -3871,6 +3897,7 @@ final class SettingsStore: ObservableObject {
         self.overlayBottomOffset = payload.overlayBottomOffset
         self.overlayPlacement = payload.overlayPlacement
         self.overlaySize = payload.overlaySize
+        self.overlayCustomSize = payload.overlayCustomSize
         if let overlayMaterial = payload.overlayMaterial {
             self.overlayMaterial = overlayMaterial
         }

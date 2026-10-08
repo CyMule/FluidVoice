@@ -1,10 +1,41 @@
 import AppKit
 import Combine
+import SwiftUI
 @testable import FluidVoice_Debug
 import XCTest
 
 @MainActor
 final class SettingsBackupRoundTripTests: XCTestCase {
+    private final class SearchFieldWriteProbe: NSSearchField {
+        var writes = 0
+        override var stringValue: String {
+            get { super.stringValue }
+            set { self.writes += 1; super.stringValue = newValue }
+        }
+    }
+
+    func testSearchTypingDoesNotEchoCharactersIntoNativeEditor() {
+        var text = ""
+        var focused = false
+        let input = SidebarSearchInput(
+            text: Binding(get: { text }, set: { text = $0 }), placeholder: "Search Settings", isActive: true,
+            isFocused: Binding(get: { focused }, set: { focused = $0 })
+        )
+        let coordinator = input.makeCoordinator()
+        let field = SearchFieldWriteProbe()
+        for letter in "audio" {
+            field.stringValue.append(letter)
+            field.writes = 0
+            coordinator.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: field))
+            coordinator.synchronizeExternalText(text, in: field)
+            XCTAssertEqual(field.writes, 0, "SwiftUI must not reapply an in-progress native edit")
+        }
+        XCTAssertEqual(text, "audio")
+        text = ""
+        coordinator.synchronizeExternalText(text, in: field)
+        XCTAssertEqual(field.stringValue, "", "Explicit Clear must still reach the native field")
+    }
+
     func testPersonalIdentityImportsPreferencesOnceWithoutCredentials() throws {
         let suite = "MurmurMigrationTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -37,6 +68,45 @@ final class SettingsBackupRoundTripTests: XCTestCase {
             let oldPayload = try JSONDecoder().decode(SettingsBackupPayload.self, from: JSONSerialization.data(withJSONObject: legacy))
             XCTAssertNil(oldPayload.overlayPlacement)
         }
+    }
+
+    func testPreviewResizeKeepsTopLeftAndSurvivesNextPresentation() throws {
+        try self.withSavedDefaults {
+            let settings = SettingsStore.shared
+            let controller = BottomOverlayWindowController.shared
+            settings.overlaySize = .small
+            settings.overlayPlacement = .init(displayID: "fallback", x: 0.4, y: 0.4)
+            defer { controller.hideImmediately(); controller.destroyWindowForTests() }
+            controller.show(audioPublisher: Empty<CGFloat, Never>().eraseToAnyPublisher(), mode: .dictation)
+            let panel = try XCTUnwrap(NSApp.windows.first { $0 is BottomOverlayPanel })
+            let original = panel.frame
+            controller.beginResizing(at: .zero)
+            controller.resize(to: CGPoint(x: 70, y: -50))
+            controller.finishResizing()
+            let resized = panel.frame
+            XCTAssertEqual(resized.minX, original.minX, accuracy: 1)
+            XCTAssertEqual(resized.maxY, original.maxY, accuracy: 1)
+            XCTAssertEqual(resized.width, original.width + 70, accuracy: 1)
+            XCTAssertEqual(resized.height, original.height + 50, accuracy: 1)
+            let payload = settings.makeBackupPayload()
+            let restored = try JSONDecoder().decode(SettingsBackupPayload.self, from: JSONEncoder().encode(payload))
+            settings.overlaySize = .medium
+            XCTAssertNil(settings.overlayCustomSize)
+            settings.restore(from: restored, promptProfiles: settings.dictationPromptProfiles, appPromptBindings: [])
+            XCTAssertEqual(settings.overlayCustomSize, payload.overlayCustomSize)
+            controller.hideImmediately()
+            controller.show(audioPublisher: Empty<CGFloat, Never>().eraseToAnyPublisher(), mode: .dictation)
+            XCTAssertEqual(panel.frame.width, resized.width, accuracy: 1)
+            XCTAssertEqual(panel.frame.height, resized.height, accuracy: 1)
+            XCTAssertEqual(panel.frame.minX, resized.minX, accuracy: 1)
+            XCTAssertEqual(panel.frame.minY, resized.minY, accuracy: 1)
+        }
+    }
+
+    func testCustomPreviewSizeHasSafeBounds() {
+        XCTAssertEqual(SettingsStore.OverlayCustomSize(width: 50, height: 20).clamped, .init(width: 180, height: 96))
+        XCTAssertEqual(SettingsStore.OverlayCustomSize(width: 1000, height: 1000).clamped, .init(width: 600, height: 360))
+        XCTAssertEqual(SettingsStore.OverlayCustomSize(width: .nan, height: .infinity).clamped, .init(width: 220, height: 96))
     }
 
     func testSavedOverlayPositionIsReusedAcrossPresentations() throws {

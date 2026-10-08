@@ -706,7 +706,7 @@ private final class SidebarSearchNativeField: NSSearchField {
     }
 }
 
-private struct SidebarSearchInput: NSViewRepresentable {
+struct SidebarSearchInput: NSViewRepresentable {
     private static let identifier = NSUserInterfaceItemIdentifier("Murmur.SidebarSearchField")
 
     @Binding var text: String
@@ -738,15 +738,14 @@ private struct SidebarSearchInput: NSViewRepresentable {
         searchField.font = .systemFont(ofSize: 14)
         searchField.identifier = Self.identifier
         searchField.setAccessibilityLabel(self.placeholder)
+        searchField.stringValue = self.text
         context.coordinator.observeFocusRequests(for: searchField)
         return searchField
     }
 
     func updateNSView(_ searchField: NSSearchField, context: Context) {
         context.coordinator.parent = self
-        if searchField.stringValue != self.text {
-            searchField.stringValue = self.text
-        }
+        context.coordinator.synchronizeExternalText(self.text, in: searchField)
         Self.resignFocusIfNeeded(from: searchField, isActive: self.isActive)
     }
 
@@ -777,9 +776,28 @@ private struct SidebarSearchInput: NSViewRepresentable {
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var parent: SidebarSearchInput
         private var focusObserver: NSObjectProtocol?
+        private var lastSynchronizedText: String
 
         init(_ parent: SidebarSearchInput) {
             self.parent = parent
+            self.lastSynchronizedText = parent.text
+        }
+
+        func synchronizeExternalText(_ text: String, in field: NSSearchField) {
+            // A binding echo of the current AppKit edit must not write back
+            // into its field editor while it is handling that key event.
+            guard text != self.lastSynchronizedText else { return }
+            if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText(), !text.isEmpty { return }
+            self.lastSynchronizedText = text
+            let editor = field.currentEditor() as? NSTextView
+            let selection = editor?.selectedRange()
+            if (editor?.string ?? field.stringValue) != text {
+                field.stringValue = text
+                if let editor, let selection {
+                    let count = (text as NSString).length
+                    editor.setSelectedRange(NSRange(location: min(selection.location, count), length: min(selection.length, max(0, count - selection.location))))
+                }
+            }
         }
 
         deinit {
@@ -805,7 +823,9 @@ private struct SidebarSearchInput: NSViewRepresentable {
 
         func controlTextDidChange(_ notification: Notification) {
             guard let searchField = notification.object as? NSSearchField else { return }
-            self.parent.text = searchField.stringValue
+            let text = (searchField.currentEditor() as? NSTextView)?.string ?? searchField.stringValue
+            self.lastSynchronizedText = text
+            self.parent.text = text
         }
 
         func control(
@@ -818,6 +838,7 @@ private struct SidebarSearchInput: NSViewRepresentable {
             }
             textView.string = ""
             control.stringValue = ""
+            self.lastSynchronizedText = ""
             self.parent.text = ""
             return true
         }
