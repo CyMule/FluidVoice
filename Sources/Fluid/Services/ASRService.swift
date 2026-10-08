@@ -2056,6 +2056,10 @@ final class ASRService: ObservableObject {
 
     // Streaming transcription state (no VAD)
     private let streamingTaskLifecycle = StreamingTaskLifecycle()
+    private var previewCadence = DictationPreviewCadence()
+    private var previewRecordingStartedAt: TimeInterval?
+    private var firstPreviewResultMilliseconds: Int?
+    private var maximumPreviewDecodeMilliseconds = 0
     private var streamingWorkState = StreamingTranscriptionWorkState()
     private var streamingSchedulingSessionID: Int?
     private let recordingBufferHandoffGate = RecordingBufferHandoffGate()
@@ -2852,6 +2856,10 @@ final class ASRService: ObservableObject {
         self.streamingWorkState.beginSession(self.benchmarkSessionID)
         self.streamingHealthCheckCount = 0
         self.streamingHealthLastBufferCount = 0
+        self.previewCadence = DictationPreviewCadence()
+        self.previewRecordingStartedAt = ProcessInfo.processInfo.systemUptime
+        self.firstPreviewResultMilliseconds = nil
+        self.maximumPreviewDecodeMilliseconds = 0
         self.silentPCMRecoveryWatchdog = AudioCaptureIdlePolicy.SilentPCMRecoveryWatchdog()
         let captureSessionID = self.benchmarkSessionID
         // Start media work alongside microphone startup; never await it on the
@@ -3568,6 +3576,18 @@ final class ASRService: ObservableObject {
         self.benchmarkLog("stop_streaming_wait elapsedMs=\(self.elapsedMilliseconds(since: streamingStopStartedAt))")
         traceStop("streaming_drain_end")
         DebugLogger.shared.debug("✅ Active streaming work completed", source: "ASRService")
+        if self.benchmarkCompletedStreamingChunks > 0 {
+            // This measures assignment of a nonempty preview, not a rendered frame.
+            // One lightweight summary per recording is available in Release logs.
+            DebugLogger.shared.info(
+                "PREVIEW_SUMMARY session=\(stoppingSessionID) " +
+                    "firstResultMs=\(self.firstPreviewResultMilliseconds ?? -1) " +
+                    "completedDecodes=\(self.benchmarkCompletedStreamingChunks) " +
+                    "maxDecodeMs=\(self.maximumPreviewDecodeMilliseconds) " +
+                    "measurement=recording_setup_to_preview_assignment",
+                source: "ASRService"
+            )
+        }
 
         self.isProcessingChunk = false
         self.skipNextChunk = false
@@ -7007,9 +7027,18 @@ final class ASRService: ObservableObject {
             self.streamingHealthCheckCount = 0
         }
 
+        let thermalState = ProcessInfo.processInfo.thermalState
+        let adaptivePreviewEnabled = SettingsStore.shared.selectedSpeechModel == .parakeetTDTv2
+            && thermalState != .serious && thermalState != .critical
+        let delay = self.previewCadence.delaySeconds(
+            enabled: adaptivePreviewEnabled,
+            availableSamples: self.audioBuffer.count,
+            minimumSamples: self.minimumStreamingPreviewSamples,
+            fallbackInterval: self.streamingChunkDurationSeconds
+        )
         self.scheduleNextStreamingChunk(
             sessionID: sessionID,
-            delayNanoseconds: UInt64(self.streamingChunkDurationSeconds * 1_000_000_000)
+            delayNanoseconds: UInt64(delay * 1_000_000_000)
         )
     }
 
@@ -7093,6 +7122,7 @@ final class ASRService: ObservableObject {
 
         let startTime = Date()
         let startedAt = startTime.timeIntervalSince1970
+        let inferenceStartedAt = ProcessInfo.processInfo.systemUptime
         let newSamples = max(0, currentSampleCount - self.benchmarkLastChunkSampleCount)
         self.benchmarkLastChunkSampleCount = currentSampleCount
         let audioMilliseconds = Int((Double(currentSampleCount) / 16_000.0 * 1000).rounded())
@@ -7187,6 +7217,11 @@ final class ASRService: ObservableObject {
             }
 
             let duration = Date().timeIntervalSince(startTime)
+            let inferenceDuration = ProcessInfo.processInfo.systemUptime - inferenceStartedAt
+            self.previewCadence.recordDecode(duration: inferenceDuration)
+            self.maximumPreviewDecodeMilliseconds = max(
+                self.maximumPreviewDecodeMilliseconds, Int((inferenceDuration * 1000).rounded())
+            )
             DebugLogger.shared.debug(
                 "Streaming chunk transcription finished in \(String(format: "%.2f", duration))s",
                 source: "ASRService"
@@ -7212,6 +7247,11 @@ final class ASRService: ObservableObject {
                 let updatedText = self.smartDiffUpdate(previous: self.previousFullTranscription, current: newText)
                 self.partialTranscription = updatedText
                 self.previousFullTranscription = newText
+                if self.firstPreviewResultMilliseconds == nil, let startedAt = self.previewRecordingStartedAt {
+                    self.firstPreviewResultMilliseconds = Int(
+                        ((ProcessInfo.processInfo.systemUptime - startedAt) * 1000).rounded()
+                    )
+                }
 
                 DebugLogger.shared.debug("✅ Streaming: '\(updatedText)' (\(String(format: "%.2f", duration))s)", source: "ASRService")
             }
@@ -7222,9 +7262,9 @@ final class ASRService: ObservableObject {
                     "samples=\(currentSampleCount) inputSamples=\(chunk.count) rawChars=\(rawText.count) cleanedChars=\(newText.count) rtf=\(String(format: "%.3f", rtf))"
             )
 
-            // The completion-driven scheduler already waits for this decode to finish,
-            // then rests for streamingChunkDurationSeconds. Skipping another interval
-            // after a successful slow decode only makes the live preview fall behind.
+            // The completion-driven scheduler waits for this decode and then applies
+            // its idle budget. Do not add another skipped interval after a successful
+            // slow decode; the cadence policy already handles contention.
             // Keep error recovery skips below, but don't penalize successful work.
         } catch where self.streamingWorkState.canPublishPreview(
             sessionID: sessionID,
@@ -7233,6 +7273,7 @@ final class ASRService: ObservableObject {
             isRunning: self.isRunning,
             schedulingSessionID: self.streamingSchedulingSessionID
         ) {
+            self.previewCadence.recordFailure(fallbackInterval: self.streamingChunkDurationSeconds)
             DebugLogger.shared.error("❌ Streaming failed: \(error)", source: "ASRService")
             self
                 .benchmarkLog(

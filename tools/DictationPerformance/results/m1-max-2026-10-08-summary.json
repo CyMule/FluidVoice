@@ -1,0 +1,85 @@
+{
+  "scope": "Provider-only real-time replay; no microphone, dictionary, UI, paste, or human WER assessment",
+  "pairs": 22,
+  "finalTranscriptComparisons": 44,
+  "exactMatches": 44,
+  "fixtures": [
+    "correction",
+    "hello",
+    "long-stock",
+    "names",
+    "negation",
+    "numbers",
+    "short",
+    "stock"
+  ],
+  "thermalStates": [
+    0
+  ],
+  "policies": {
+    "current": {
+      "firstResultMs": {
+        "n": 22,
+        "median": 1340.26,
+        "p95": 1360.28,
+        "max": 1363.43
+      },
+      "perRunMedianPreviewGapMs": {
+        "n": 17,
+        "median": 720.94,
+        "p95": 750.32,
+        "max": 750.32
+      },
+      "stopToFinalMs": {
+        "n": 22,
+        "median": 104.17,
+        "p95": 144.97,
+        "max": 166.23
+      },
+      "previewWorkPercent": {
+        "n": 22,
+        "median": 9.74,
+        "p95": 10.67,
+        "max": 15.51
+      }
+    },
+    "adaptive": {
+      "firstResultMs": {
+        "n": 22,
+        "median": 1103.95,
+        "p95": 1112.56,
+        "max": 1113.05
+      },
+      "perRunMedianPreviewGapMs": {
+        "n": 21,
+        "median": 352.66,
+        "p95": 402.98,
+        "max": 480.41
+      },
+      "stopToFinalMs": {
+        "n": 22,
+        "median": 100.49,
+        "p95": 164.32,
+        "max": 166.65
+      },
+      "previewWorkPercent": {
+        "n": 22,
+        "median": 18.92,
+        "p95": 20.96,
+        "max": 22.51
+      }
+    }
+  },
+  "acceptanceChecks": {
+    "firstPreviewAtLeast150msEarlier": true,
+    "previewGapAtLeast25PercentShorter": true,
+    "stopP95Within50msOfBaseline": true,
+    "allFinalTranscriptsIdentical": true
+  },
+  "pairedStopDifferencesMs": {
+    "n": 22,
+    "median": -0.31,
+    "p95": 55.07,
+    "max": 65.61
+  }
+}

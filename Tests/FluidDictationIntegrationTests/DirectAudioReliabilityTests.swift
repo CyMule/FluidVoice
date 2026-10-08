@@ -5,6 +5,59 @@ import Foundation
 import XCTest
 
 final class DirectAudioReliabilityTests: XCTestCase {
+    func testAdaptivePreviewWaitsForModelMinimumWithoutAnotherFullPollingInterval() {
+        let cadence = DictationPreviewCadence()
+        XCTAssertEqual(cadence.delaySeconds(enabled: true, availableSamples: 9_600,
+            minimumSamples: 16_000, fallbackInterval: 0.6), 0.4, accuracy: 0.001)
+        XCTAssertEqual(cadence.delaySeconds(enabled: true, availableSamples: 15_999,
+            minimumSamples: 16_000, fallbackInterval: 0.6), 0.04, accuracy: 0.001)
+    }
+
+    func testAdaptivePreviewBudgetsFastInferenceAndBacksOffAfterContention() {
+        var cadence = DictationPreviewCadence()
+        cadence.recordDecode(duration: 0.09)
+        XCTAssertEqual(cadence.delaySeconds(enabled: true, availableSamples: 32_000,
+            minimumSamples: 16_000, fallbackInterval: 0.6), 0.27, accuracy: 0.001)
+        cadence.recordDecode(duration: 0.8)
+        XCTAssertEqual(cadence.delaySeconds(enabled: true, availableSamples: 32_000,
+            minimumSamples: 16_000, fallbackInterval: 0.6), 0.6, accuracy: 0.001)
+        cadence.recordDecode(duration: 0.05)
+        XCTAssertEqual(cadence.delaySeconds(enabled: true, availableSamples: 32_000,
+            minimumSamples: 16_000, fallbackInterval: 0.6), 0.6, accuracy: 0.001)
+        for _ in 0..<10 { cadence.recordDecode(duration: 0.05) }
+        let recovered = cadence.delaySeconds(enabled: true, availableSamples: 32_000,
+            minimumSamples: 16_000, fallbackInterval: 0.6)
+        XCTAssertGreaterThanOrEqual(recovered, 0.2)
+        XCTAssertLessThan(recovered, 0.3)
+    }
+
+    func testPreviewFailurePreservesTheExistingRecoveryDelay() {
+        var cadence = DictationPreviewCadence()
+        cadence.recordDecode(duration: 0.05)
+        cadence.recordFailure(fallbackInterval: 0.6)
+        XCTAssertEqual(cadence.delaySeconds(enabled: true, availableSamples: 32_000,
+            minimumSamples: 16_000, fallbackInterval: 0.6), 0.6, accuracy: 0.001)
+    }
+
+    func testPreviewFallbackPreservesOtherProvidersAndThermalBackoff() {
+        var cadence = DictationPreviewCadence()
+        cadence.recordDecode(duration: 0.01)
+        for fallback in [0.2, 0.32, 0.6, 1.0] {
+            XCTAssertEqual(cadence.delaySeconds(enabled: false, availableSamples: 15_900,
+                minimumSamples: 16_000, fallbackInterval: fallback), fallback)
+        }
+    }
+
+    func testPreviewTimingRejectsInvalidMeasurementsAndNewRecordingResetsHistory() {
+        var cadence = DictationPreviewCadence()
+        cadence.recordDecode(duration: 0.8)
+        let before = cadence.estimatedDecodeSeconds
+        for invalid in [Double.nan, .infinity, -1] { cadence.recordDecode(duration: invalid) }
+        XCTAssertEqual(cadence.estimatedDecodeSeconds, before)
+        cadence = DictationPreviewCadence()
+        XCTAssertEqual(cadence.estimatedDecodeSeconds, 0.1)
+    }
+
     func testPipelineCorrelationIsInheritedAndRestoredAcrossConcurrentRequests() async {
         let original = DebugLogger.pipelineID
         let values = await withTaskGroup(of: String?.self, returning: [String?].self) { group in
