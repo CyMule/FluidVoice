@@ -1,10 +1,93 @@
+import AppKit
 import Combine
 import CoreAudio
 @testable import FluidVoice_Debug
 import Foundation
+import SwiftUI
+import Vision
 import XCTest
 
 final class DirectAudioReliabilityTests: XCTestCase {
+    @MainActor
+    func testColdStopOverlayShowsExplanationAndCancelInsteadOfBlankPreview() async throws {
+        let asr = AppServices.shared.asr
+        let content = NotchContentState.shared
+        let settings = SettingsStore.shared
+        let previous = (asr.isAsrReady, asr.isLoadingModel, asr.isRunning,
+                        content.isProcessing, content.transcriptionText, content.mode,
+                        settings.overlaySize, settings.overlayCustomSize)
+        defer {
+            asr.isAsrReady = previous.0
+            asr.isLoadingModel = previous.1
+            asr.isRunning = previous.2
+            content.isProcessing = previous.3
+            content.updateTranscription(previous.4)
+            content.mode = previous.5
+            settings.overlaySize = previous.6
+            settings.overlayCustomSize = previous.7
+        }
+        asr.isAsrReady = false
+        asr.isLoadingModel = true
+        asr.isRunning = false
+        content.mode = .dictation
+        content.isProcessing = true
+        content.updateTranscription("Transcribing")
+        settings.overlaySize = .small
+        settings.overlayCustomSize = .init(width: 312, height: 140)
+
+        let size = NSSize(width: 312, height: 140)
+        let host = NSHostingView(rootView: BottomOverlayView())
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        host.frame = NSRect(origin: .zero, size: size)
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        host.layoutSubtreeIfNeeded()
+
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let image = try XCTUnwrap(bitmap.cgImage)
+        let attachment = XCTAttachment(image: NSImage(cgImage: image, size: size))
+        attachment.name = "Cold start stopped overlay"
+        attachment.lifetime = .keepAlways
+        self.add(attachment)
+        // An offscreen hosting view does not expose the same accessibility tree
+        // as a visible window. Check the actual rendered copy instead, without
+        // opening a panel over the user's work or recording their microphone.
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US"]
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+            .joined(separator: "\n").lowercased()
+        XCTAssertTrue(text.contains("preparing your text"), text)
+        XCTAssertTrue(text.contains("recording stopped"), text)
+        XCTAssertTrue(text.contains("cancel dictation"), text)
+        window.close()
+    }
+
+    func testColdDictationKeepsStopProgressVisibleUntilReadyAndWarm() {
+        XCTAssertTrue(DictationProgressPhase.requiresVisibleStopProgress(ready: false, warming: false))
+        XCTAssertTrue(DictationProgressPhase.requiresVisibleStopProgress(ready: false, warming: true))
+        XCTAssertTrue(DictationProgressPhase.requiresVisibleStopProgress(ready: true, warming: true))
+        XCTAssertFalse(DictationProgressPhase.requiresVisibleStopProgress(ready: true, warming: false))
+    }
+
+    func testDictationProgressDistinguishesCaptureFromWaitingForText() {
+        XCTAssertEqual(DictationProgressPhase.resolve(recording: true, processing: false, preparing: true),
+                       .recordingWhilePreparing)
+        // Stop UI invalidation can briefly hold isRunning true. Processing takes
+        // priority so the interface never claims capture is still active.
+        XCTAssertEqual(DictationProgressPhase.resolve(recording: true, processing: true, preparing: true),
+                       .stoppedWhilePreparing)
+        XCTAssertEqual(DictationProgressPhase.resolve(recording: false, processing: true, preparing: false),
+                       .finishing)
+        XCTAssertNil(DictationProgressPhase.resolve(recording: false, processing: false, preparing: true))
+        XCTAssertNil(DictationProgressPhase.resolve(recording: true, processing: false, preparing: false))
+    }
+
     func testAdaptivePreviewWaitsForModelMinimumWithoutAnotherFullPollingInterval() {
         let cadence = DictationPreviewCadence()
         XCTAssertEqual(cadence.delaySeconds(enabled: true, availableSamples: 9_600,

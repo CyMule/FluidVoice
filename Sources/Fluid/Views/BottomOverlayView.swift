@@ -2525,6 +2525,7 @@ struct BottomOverlayView: View {
     // Observe only model readiness, not every ASR publication during recording.
     private let appServices = AppServices.shared
     @State private var isModelLoading = false
+    @State private var isRecording = false
     @ObservedObject private var activeAppMonitor = ActiveAppMonitor.shared
     @ObservedObject private var settings = SettingsStore.shared
     @Environment(\.theme) private var theme
@@ -2748,6 +2749,29 @@ struct BottomOverlayView: View {
         return t
     }
 
+    private var dictationProgressPhase: DictationProgressPhase? {
+        guard self.contentState.mode == .dictation else { return nil }
+        return DictationProgressPhase.resolve(
+            recording: self.isRecording,
+            processing: self.contentState.isProcessing,
+            preparing: self.isModelLoading
+        )
+    }
+
+    private var showsDictationProgressInPreview: Bool {
+        self.dictationProgressPhase != nil &&
+            (self.contentState.isProcessing ? !self.shouldShowProcessingPreview : !self.hasTranscription)
+    }
+
+    @ViewBuilder
+    private var dictationProgressView: some View {
+        if let phase = self.dictationProgressPhase {
+            DictationProgressView(phase: phase, fontSize: self.layout.transFontSize) {
+                self.contentState.onCancelRequested?()
+            }
+        }
+    }
+
     private var hasTranscription: Bool {
         !self.transcriptionPreviewText.isEmpty
     }
@@ -2937,6 +2961,7 @@ struct BottomOverlayView: View {
         self.layout.showsPreview &&
             (
                 self.settings.enableStreamingPreview ||
+                    self.dictationProgressPhase != nil ||
                     self.contentState.isAIProcessingFailureVisible ||
                     self.contentState.isTextDeliveryFailureVisible
             )
@@ -2981,6 +3006,9 @@ struct BottomOverlayView: View {
 
     private var currentPreviewSizingText: String {
         guard self.shouldReservePreviewArea else { return "" }
+        if self.showsDictationProgressInPreview, let phase = self.dictationProgressPhase {
+            return phase.title + "\n" + phase.detail + "\nCancel dictation"
+        }
         if self.shouldShowProcessingPreview {
             return self.processingPreviewText
         }
@@ -3000,6 +3028,9 @@ struct BottomOverlayView: View {
     }
 
     private var shouldSuppressPreviewDuringRelease: Bool {
+        if self.dictationProgressPhase != nil, !self.contentState.isBottomOverlayDismissing {
+            return false
+        }
         if self.shouldShowProcessingPreview {
             return false
         }
@@ -3524,7 +3555,7 @@ struct BottomOverlayView: View {
 
     private var targetAppIconView: some View {
         let appIcon = self.displayedAppIcon
-        let showModelLoading = self.layout.showsModeLabel && self.isModelLoading
+        let showModelLoading = self.layout.showsModeLabel && self.isModelLoading && !self.showsDictationProgressInPreview
         return VStack(spacing: 2) {
             if showModelLoading {
                 ProgressView()
@@ -3669,18 +3700,14 @@ struct BottomOverlayView: View {
                                 self.textDeliveryFailureView
                             } else if self.shouldShowAIProcessingFailure {
                                 self.aiProcessingFailureView
+                            } else if self.showsDictationProgressInPreview {
+                                self.dictationProgressView
                             } else if self.shouldShowProcessingPreview {
                                 self.scrollablePreviewText(self.processingPreviewText)
                             } else if self.shouldShowProcessingStatus {
-                                // Temporarily hidden; the waveform sweep carries processing state.
-                                // ShimmerText(
-                                //     text: self.processingStatusText,
-                                //     color: self.modeColor,
-                                //     font: .fluidSystem(size: self.layout.transFontSize, weight: .medium)
-                                // )
-                                // .id(self.processingStatusCycleID)
-                                // .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                                Color.clear
+                                Text(self.processingStatusText)
+                                    .font(.fluidSystem(size: self.layout.transFontSize, weight: .medium))
+                                    .foregroundStyle(.white.opacity(0.85))
                             } else if self.contentState.isProcessing {
                                 Color.clear
                             } else if self.hasTranscription {
@@ -3731,6 +3758,8 @@ struct BottomOverlayView: View {
                                 self.textDeliveryFailureView
                             } else if self.shouldShowAIProcessingFailure {
                                 self.aiProcessingFailureView
+                            } else if self.showsDictationProgressInPreview {
+                                self.dictationProgressView
                             } else if self.shouldShowProcessingPreview {
                                 self.dynamicPreviewText(self.processingPreviewText)
                             } else if self.hasTranscription && !self.contentState.isProcessing {
@@ -3758,14 +3787,9 @@ struct BottomOverlayView: View {
                                     }
                                 }
                             } else if self.shouldShowProcessingStatus {
-                                // Temporarily hidden; the waveform sweep carries processing state.
-                                // ShimmerText(
-                                //     text: self.processingStatusText,
-                                //     color: self.modeColor,
-                                //     font: .fluidSystem(size: self.layout.transFontSize, weight: .medium)
-                                // )
-                                // .id(self.processingStatusCycleID)
-                                Color.clear
+                                Text(self.processingStatusText)
+                                    .font(.fluidSystem(size: self.layout.transFontSize, weight: .medium))
+                                    .foregroundStyle(.white.opacity(0.85))
                             } else if self.contentState.isProcessing {
                                 Color.clear
                             } else {
@@ -4029,8 +4053,15 @@ struct BottomOverlayView: View {
             self.appServices.asr.$isAsrReady,
             self.appServices.asr.$isLoadingModel,
             self.appServices.asr.$isDownloadingModel
-        ).map { ready, loading, downloading in !ready && (loading || downloading) }.removeDuplicates()) { loading in
+        ).map { ready, loading, downloading in !ready || loading || downloading }.removeDuplicates()) { loading in
             self.isModelLoading = loading
+        }
+        .onReceive(self.appServices.asr.$isRunning.removeDuplicates()) { recording in
+            self.isRecording = recording
+        }
+        .onChange(of: self.dictationProgressPhase) { _, _ in
+            guard !self.usesFixedPreviewViewport else { return }
+            self.refreshDynamicPreviewSizeIfNeeded(for: self.currentPreviewSizingText)
         }
         .onReceive(self.contentState.$targetAppIcon) { icon in
             self.rememberAppIcon(icon)
