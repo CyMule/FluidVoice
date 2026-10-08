@@ -103,10 +103,52 @@ final class SettingsBackupRoundTripTests: XCTestCase {
         }
     }
 
+    func testStablePreviewDefaultPreservesUserResizing() throws {
+        let suite = "MurmurPreviewTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("small", forKey: "OverlaySize")
+        SettingsStore.migrateStablePreviewSizeIfNeeded(defaults: defaults, bundleIdentifier: "dev.cymule.murmur")
+        let data = try XCTUnwrap(defaults.data(forKey: "MurmurOverlayCustomSize"))
+        XCTAssertEqual(try JSONDecoder().decode(SettingsStore.OverlayCustomSize.self, from: data), SettingsStore.defaultPreviewSize)
+        let custom = SettingsStore.OverlayCustomSize(width: 420, height: 180)
+        defaults.set(try JSONEncoder().encode(custom), forKey: "MurmurOverlayCustomSize")
+        defaults.removeObject(forKey: "MurmurStablePreviewV1")
+        SettingsStore.migrateStablePreviewSizeIfNeeded(defaults: defaults, bundleIdentifier: "dev.cymule.murmur")
+        XCTAssertEqual(try JSONDecoder().decode(SettingsStore.OverlayCustomSize.self, from: XCTUnwrap(defaults.data(forKey: "MurmurOverlayCustomSize"))), custom)
+    }
+
+    func testCustomPreviewFrameStaysFixedAsTranscriptWraps() throws {
+        try self.withSavedDefaults {
+            let settings = SettingsStore.shared
+            let controller = BottomOverlayWindowController.shared
+            settings.overlaySize = .small
+            settings.overlayCustomSize = SettingsStore.defaultPreviewSize
+            settings.enableStreamingPreview = true
+            defer { controller.hideImmediately(); controller.destroyWindowForTests() }
+            controller.show(audioPublisher: Empty<CGFloat, Never>().eraseToAnyPublisher(), mode: .dictation)
+            let panel = try XCTUnwrap(NSApp.windows.first { $0 is BottomOverlayPanel })
+            let original = panel.frame
+            for (index, text) in ["", "This preview wraps onto several lines and keeps the visualizer, app icon, and Dictate controls at the bottom while you speak."].enumerated() {
+                NotchContentState.shared.updateTranscription(text)
+                RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+                panel.contentView?.layoutSubtreeIfNeeded()
+                XCTAssertEqual(panel.frame, original)
+                if let view = panel.contentView,
+                   let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                    view.cacheDisplay(in: view.bounds, to: bitmap)
+                    try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/murmur-preview-\(index).png"))
+                }
+            }
+            XCTAssertEqual(panel.frame.width, 312, accuracy: 0.5)
+            XCTAssertEqual(panel.frame.height, 140, accuracy: 0.5)
+        }
+    }
+
     func testCustomPreviewSizeHasSafeBounds() {
         XCTAssertEqual(SettingsStore.OverlayCustomSize(width: 50, height: 20).clamped, .init(width: 180, height: 96))
         XCTAssertEqual(SettingsStore.OverlayCustomSize(width: 1000, height: 1000).clamped, .init(width: 600, height: 360))
-        XCTAssertEqual(SettingsStore.OverlayCustomSize(width: .nan, height: .infinity).clamped, .init(width: 220, height: 96))
+        XCTAssertEqual(SettingsStore.OverlayCustomSize(width: .nan, height: .infinity).clamped, SettingsStore.defaultPreviewSize)
     }
 
     func testSavedOverlayPositionIsReusedAcrossPresentations() throws {
@@ -127,7 +169,7 @@ final class SettingsBackupRoundTripTests: XCTestCase {
                 let expected = BottomOverlayWindowController.savedOrigin(for: panel.frame.size, visibleFrame: screen.visibleFrame, placement: saved)
                 XCTAssertEqual(panel.frame.minX, expected.x, accuracy: 1)
                 XCTAssertEqual(panel.frame.minY, expected.y, accuracy: 1)
-                XCTAssertEqual(panel.frame.width, 220, accuracy: 1)
+                XCTAssertEqual(panel.frame.width, SettingsStore.defaultPreviewSize.width, accuracy: 1)
                 controller.hideImmediately()
             }
         }

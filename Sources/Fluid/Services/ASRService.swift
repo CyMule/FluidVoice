@@ -7222,15 +7222,10 @@ final class ASRService: ObservableObject {
                     "samples=\(currentSampleCount) inputSamples=\(chunk.count) rawChars=\(rawText.count) cleanedChars=\(newText.count) rtf=\(String(format: "%.3f", rtf))"
             )
 
-            // If transcription takes longer than the interval, skip next to prevent queue buildup
-            // This allows slower machines to still work without overwhelming the system
-            if duration > self.streamingChunkDurationSeconds {
-                DebugLogger.shared.debug(
-                    "⚠️ Transcription slow (\(String(format: "%.2f", duration))s > \(self.streamingChunkDurationSeconds)s), skipping next chunk",
-                    source: "ASRService"
-                )
-                self.skipNextChunk = true
-            }
+            // The completion-driven scheduler already waits for this decode to finish,
+            // then rests for streamingChunkDurationSeconds. Skipping another interval
+            // after a successful slow decode only makes the live preview fall behind.
+            // Keep error recovery skips below, but don't penalize successful work.
         } catch where self.streamingWorkState.canPublishPreview(
             sessionID: sessionID,
             operationID: operationID,

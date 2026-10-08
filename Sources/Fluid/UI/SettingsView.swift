@@ -1429,7 +1429,7 @@ struct SettingsView: View {
                                             .font(self.theme.typography.bodySmall)
                                             .foregroundStyle(self.settingsSecondaryText)
                                         Spacer()
-                                        Button("Reset Size") { self.settings.overlayCustomSize = nil }
+                                        Button("Reset Size") { self.settings.overlayCustomSize = SettingsStore.defaultPreviewSize }
                                     }
                                 }
 

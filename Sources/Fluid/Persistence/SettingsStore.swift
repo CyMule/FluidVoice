@@ -52,6 +52,7 @@ final class SettingsStore: ObservableObject {
             self.defaults.set(OverlaySize.small.rawValue, forKey: Keys.overlaySize)
             self.defaults.set(true, forKey: "MurmurCompactOverlayV1")
         }
+        Self.migrateStablePreviewSizeIfNeeded(defaults: self.defaults, bundleIdentifier: Bundle.main.bundleIdentifier)
         self.migrateTranscriptionStartSoundIfNeeded()
         self.ensureDebugLoggingDefaults()
         self.migrateProviderAPIKeysIfNeeded()
@@ -2440,20 +2441,38 @@ final class SettingsStore: ObservableObject {
         let y: Double
     }
 
+    static let defaultPreviewSize = OverlayCustomSize(width: 312, height: 140)
+
+    static func migrateStablePreviewSizeIfNeeded(defaults: UserDefaults, bundleIdentifier: String?) {
+        guard bundleIdentifier == "dev.cymule.murmur", !defaults.bool(forKey: "MurmurStablePreviewV1") else { return }
+        // Keep an existing manually resized preview and its saved placement.
+        if defaults.data(forKey: "MurmurOverlayCustomSize") == nil,
+           defaults.string(forKey: Keys.overlaySize) == OverlaySize.small.rawValue,
+           let data = try? JSONEncoder().encode(Self.defaultPreviewSize) {
+            defaults.set(data, forKey: "MurmurOverlayCustomSize")
+        }
+        defaults.set(true, forKey: "MurmurStablePreviewV1")
+    }
+
+    private var cachedOverlaySizeData: Data?
+    private var cachedOverlaySizeValue: OverlayCustomSize?
+
     struct OverlayCustomSize: Codable, Equatable {
         let width: Double
         let height: Double
         var clamped: Self {
-            guard self.width.isFinite, self.height.isFinite else { return .init(width: 220, height: 96) }
+            guard self.width.isFinite, self.height.isFinite else { return SettingsStore.defaultPreviewSize }
             return .init(width: min(max(self.width, 180), 600), height: min(max(self.height, 96), 360))
         }
     }
 
     var overlayCustomSize: OverlayCustomSize? {
         get {
-            guard let data = self.defaults.data(forKey: "MurmurOverlayCustomSize"),
-                  let value = try? JSONDecoder().decode(OverlayCustomSize.self, from: data) else { return nil }
-            return value.clamped
+            let data = self.defaults.data(forKey: "MurmurOverlayCustomSize")
+            if data == self.cachedOverlaySizeData { return self.cachedOverlaySizeValue }
+            self.cachedOverlaySizeData = data
+            self.cachedOverlaySizeValue = data.flatMap { try? JSONDecoder().decode(OverlayCustomSize.self, from: $0) }?.clamped
+            return self.cachedOverlaySizeValue
         }
         set {
             objectWillChange.send()
@@ -2511,7 +2530,11 @@ final class SettingsStore: ObservableObject {
         set {
             objectWillChange.send()
             self.defaults.set(newValue.rawValue, forKey: Keys.overlaySize)
-            self.defaults.removeObject(forKey: "MurmurOverlayCustomSize")
+            if newValue == .small, let data = try? JSONEncoder().encode(Self.defaultPreviewSize) {
+                self.defaults.set(data, forKey: "MurmurOverlayCustomSize")
+            } else {
+                self.defaults.removeObject(forKey: "MurmurOverlayCustomSize")
+            }
 
             // Post notification for live update if overlay is visible
             NotificationCenter.default.post(name: NSNotification.Name("OverlaySizeChanged"), object: nil)

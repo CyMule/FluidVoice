@@ -100,7 +100,7 @@ struct BottomWaveformView: View {
         if !self.contentState.isBottomOverlayPresented || self.isReleaseAnimationActive || self.contentState.isProcessing {
             self.bars(heights: Array(repeating: self.minHeight, count: self.barCount))
         } else {
-            TimelineView(.animation(minimumInterval: 1.0 / 50.0)) { timeline in
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
                 self.bars(heights: self.simulation.step(
                     at: timeline.date,
                     barCount: self.barCount,

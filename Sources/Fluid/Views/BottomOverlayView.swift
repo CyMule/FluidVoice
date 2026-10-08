@@ -604,7 +604,7 @@ final class BottomOverlayWindowController {
         hostingView.invalidateIntrinsicContentSize()
         hostingView.layoutSubtreeIfNeeded()
         trace.mark("layout1")
-        let firstFrameSize = hostingView.fittingSize
+        let firstFrameSize = SettingsStore.shared.overlayCustomSize.map { CGSize(width: $0.width, height: $0.height) } ?? hostingView.fittingSize
         trace.mark("fittingSize")
         hostingView.frame = NSRect(origin: .zero, size: firstFrameSize)
         window.setFrame(NSRect(origin: window.frame.origin, size: firstFrameSize), display: false)
@@ -2522,9 +2522,10 @@ private struct DynamicPreviewHeightPreferenceKey: PreferenceKey {
 
 struct BottomOverlayView: View {
     @ObservedObject private var contentState = NotchContentState.shared
-    @ObservedObject private var appServices = AppServices.shared
+    // Observe only model readiness, not every ASR publication during recording.
+    private let appServices = AppServices.shared
+    @State private var isModelLoading = false
     @ObservedObject private var activeAppMonitor = ActiveAppMonitor.shared
-    @ObservedObject private var historyStore = TranscriptionHistoryStore.shared
     @ObservedObject private var settings = SettingsStore.shared
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -2923,9 +2924,13 @@ struct BottomOverlayView: View {
         return max(0, rowWidth + 6 - waveformRight - 6 - 32 - 4)
     }
 
+    private var usesFixedPreviewViewport: Bool {
+        self.layout.usesFixedCanvas || (!self.isPillSize && self.settings.overlayCustomSize != nil)
+    }
+
     private var previewMaxHeight: CGFloat {
-        if let custom = self.settings.overlayCustomSize, !self.isPillSize { return max(16, CGFloat(custom.height) - 80) }
-        return self.layout.usesFixedCanvas ? self.layout.previewBoxHeight : self.layout.transFontSize * 4.2
+        if let custom = self.settings.overlayCustomSize, !self.isPillSize { return max(16, CGFloat(custom.height) - 54) }
+        return self.usesFixedPreviewViewport ? self.layout.previewBoxHeight : self.layout.transFontSize * 4.2
     }
 
     private var shouldReservePreviewArea: Bool {
@@ -2939,13 +2944,13 @@ struct BottomOverlayView: View {
 
     private var overlayFrameHeight: CGFloat? {
         if let custom = self.settings.overlayCustomSize, !self.isPillSize { return CGFloat(custom.height) }
-        guard self.layout.usesFixedCanvas else { return nil }
+        guard self.usesFixedPreviewViewport else { return nil }
         return self.shouldReservePreviewArea ? self.layout.overlayHeight : nil
     }
 
     private var previewMaxWidth: CGFloat {
         if let custom = self.settings.overlayCustomSize, !self.isPillSize { return CGFloat(custom.width) - self.layout.hPadding * 2 }
-        if self.layout.usesFixedCanvas {
+        if self.usesFixedPreviewViewport {
             return self.layout.waveformWidth * 2.2
         }
 
@@ -3021,7 +3026,7 @@ struct BottomOverlayView: View {
 
     private func refreshDynamicPreviewSizeIfNeeded(for previewText: String) {
         guard self.shouldReservePreviewArea else { return }
-        guard !self.layout.usesFixedCanvas else { return }
+        guard !self.usesFixedPreviewViewport else { return }
         let nextBucket = self.previewResizeBucket(for: previewText)
         guard nextBucket != self.dynamicPreviewResizeBucket else { return }
         self.dynamicPreviewResizeBucket = nextBucket
@@ -3519,8 +3524,7 @@ struct BottomOverlayView: View {
 
     private var targetAppIconView: some View {
         let appIcon = self.displayedAppIcon
-        let showModelLoading = self.layout.showsModeLabel && !self.appServices.asr.isAsrReady &&
-            (self.appServices.asr.isLoadingModel || self.appServices.asr.isDownloadingModel)
+        let showModelLoading = self.layout.showsModeLabel && self.isModelLoading
         return VStack(spacing: 2) {
             if showModelLoading {
                 ProgressView()
@@ -3569,7 +3573,7 @@ struct BottomOverlayView: View {
             detail: TextDeliveryFailure.userFacingDetail(forMessage: message),
             transcript: self.contentState.textDeliveryFailureTranscript,
             fontSize: self.layout.transFontSize,
-            compact: self.layout.usesFixedCanvas,
+            compact: self.usesFixedPreviewViewport,
             maxWidth: self.previewMaxWidth
         ) {
             self.contentState.clearTextDeliveryFailure()
@@ -3620,6 +3624,26 @@ struct BottomOverlayView: View {
         }
     }
 
+    private var compactModeLabelView: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(self.modeLabel)
+                .font(.fluidSystem(size: self.layout.modeFontSize, weight: .semibold))
+                .foregroundStyle(self.modeColor)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+            if self.isModelLoading && self.settings.overlaySize != .small {
+                Text("Loading model…")
+                    .font(.fluidSystem(size: max(self.layout.modeFontSize - 2, 9), weight: .medium))
+                    .foregroundStyle(.orange.opacity(0.85))
+                    .lineLimit(1)
+            }
+        }
+        .animation(
+            self.reduceMotion ? nil : .easeOut(duration: 0.14),
+            value: self.contentState.spokenSendIndicatorState
+        )
+    }
+
     var body: some View {
         VStack(spacing: max(4, self.layout.vPadding / 2)) {
             OverlayDragGrip()
@@ -3636,7 +3660,7 @@ struct BottomOverlayView: View {
 
             VStack(spacing: self.layout.vPadding / 2) {
                 if self.shouldReservePreviewArea {
-                    if self.layout.usesFixedCanvas {
+                    if self.usesFixedPreviewViewport {
                         // Transcription text area (fixed-height in large mode)
                         Group {
                             if self.shouldSuppressPreviewDuringRelease {
@@ -3766,9 +3790,13 @@ struct BottomOverlayView: View {
                     }
                 }
 
+                if self.settings.overlayCustomSize != nil && !self.isPillSize {
+                    Spacer(minLength: 0)
+                }
+
                 // Waveform + Mode label row
                 HStack(spacing: self.isPillSize ? 4 : self.layout.hPadding / 1.5) {
-                    if !self.layout.showsTopControls {
+                    if !self.layout.showsTopControls && self.settings.overlayCustomSize == nil {
                         self.leadingAppContextView
                     }
 
@@ -3792,34 +3820,14 @@ struct BottomOverlayView: View {
                     }
 
                     // Compact overlays still need a visible mode because they have no selector.
-                    if self.layout.showsModeLabel, !self.layout.showsTopControls {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(self.modeLabel)
-                                .font(.fluidSystem(size: self.layout.modeFontSize, weight: .semibold))
-                                .foregroundStyle(self.modeColor)
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
-
-                            if !self.appServices.asr.isAsrReady &&
-                                (self.appServices.asr.isLoadingModel || self.appServices.asr.isDownloadingModel)
-                                && self.settings.overlaySize != .small
-                            {
-                                Text("Loading model…")
-                                    .font(.fluidSystem(size: max(self.layout.modeFontSize - 2, 9), weight: .medium))
-                                    .foregroundStyle(.orange.opacity(0.85))
-                                    .lineLimit(1)
-                            }
-                        }
-                        .animation(
-                            self.reduceMotion ? nil : .easeOut(duration: 0.14),
-                            value: self.contentState.spokenSendIndicatorState
-                        )
+                    if self.layout.showsModeLabel, !self.layout.showsTopControls, self.settings.overlayCustomSize == nil {
+                        self.compactModeLabelView
                     }
                 }
                 .offset(x: self.waveformHorizontalOffset)
                 .frame(maxWidth: self.isPillSize ? nil : .infinity, alignment: .center)
                 .overlay(alignment: .leading) {
-                    if self.layout.showsTopControls {
+                    if self.layout.showsTopControls || self.settings.overlayCustomSize != nil {
                         self.leadingAppContextView
                     }
                 }
@@ -3830,6 +3838,8 @@ struct BottomOverlayView: View {
                             self.actionsSelectorView
                         }
                         .offset(x: 6)
+                    } else if self.settings.overlayCustomSize != nil {
+                        self.compactModeLabelView
                     }
                 }
             }
@@ -3912,7 +3922,7 @@ struct BottomOverlayView: View {
         .frame(
             width: self.isPillSize
                 ? PillShadowMetrics.canvasWidth
-                : (self.settings.overlayCustomSize.map { CGFloat($0.width) } ?? (self.layout.usesFixedCanvas ? self.layout.overlayWidth : self.layout.containerWidth)),
+                : (self.settings.overlayCustomSize.map { CGFloat($0.width) } ?? (self.usesFixedPreviewViewport ? self.layout.overlayWidth : self.layout.containerWidth)),
             height: self.overlayFrameHeight,
             alignment: .top
         )
@@ -3957,7 +3967,7 @@ struct BottomOverlayView: View {
             case .edit, .write, .rewrite: self.contentState.promptPickerMode = .edit
             case .command: break
             }
-            if !self.layout.usesFixedCanvas {
+            if !self.usesFixedPreviewViewport {
                 self.dynamicPreviewResizeBucket = self.previewResizeBucket(for: self.currentPreviewSizingText)
                 BottomOverlayWindowController.shared.refreshSizeForContent()
             }
@@ -3974,20 +3984,20 @@ struct BottomOverlayView: View {
             self.isHoveringPromptChip = false
             self.isHoveringActionsChip = false
             self.isHoveringSettingsChip = false
-            if !self.layout.usesFixedCanvas {
+            if !self.usesFixedPreviewViewport {
                 self.refreshDynamicPreviewSizeIfNeeded(for: self.currentPreviewSizingText)
             }
         }
         .onChange(of: self.contentState.isAIProcessingFailureVisible) { _, _ in
-            guard !self.layout.usesFixedCanvas else { return }
+            guard !self.usesFixedPreviewViewport else { return }
             self.refreshDynamicPreviewSizeIfNeeded(for: self.currentPreviewSizingText)
         }
         .onChange(of: self.contentState.isTextDeliveryFailureVisible) { _, _ in
-            guard !self.layout.usesFixedCanvas else { return }
+            guard !self.usesFixedPreviewViewport else { return }
             self.refreshDynamicPreviewSizeIfNeeded(for: self.currentPreviewSizingText)
         }
         .onChange(of: self.processingStatusVisible) { _, _ in
-            guard !self.layout.usesFixedCanvas else { return }
+            guard !self.usesFixedPreviewViewport else { return }
             self.refreshDynamicPreviewSizeIfNeeded(for: self.currentPreviewSizingText)
         }
         .onChange(of: self.contentState.isBottomOverlayReleaseTransitioning) { _, transitioning in
@@ -3995,7 +4005,7 @@ struct BottomOverlayView: View {
                 self.frozenDynamicPreviewHeight = nil
                 return
             }
-            guard !self.layout.usesFixedCanvas else { return }
+            guard !self.usesFixedPreviewViewport else { return }
             if transitioning {
                 let measuredHeight = self.dynamicPreviewMeasuredHeight > 0
                     ? self.dynamicPreviewMeasuredHeight
@@ -4007,13 +4017,20 @@ struct BottomOverlayView: View {
             }
         }
         .onPreferenceChange(DynamicPreviewHeightPreferenceKey.self) { measuredHeight in
-            guard !self.layout.usesFixedCanvas else { return }
+            guard !self.usesFixedPreviewViewport else { return }
             guard measuredHeight > 0 else { return }
             self.dynamicPreviewMeasuredHeight = measuredHeight
         }
         .onAppear {
             self.rememberAppIcon(self.contentState.targetAppIcon ?? self.activeAppMonitor.activeAppIcon)
             self.dynamicPreviewResizeBucket = self.previewResizeBucket(for: self.currentPreviewSizingText)
+        }
+        .onReceive(Publishers.CombineLatest3(
+            self.appServices.asr.$isAsrReady,
+            self.appServices.asr.$isLoadingModel,
+            self.appServices.asr.$isDownloadingModel
+        ).map { ready, loading, downloading in !ready && (loading || downloading) }.removeDuplicates()) { loading in
+            self.isModelLoading = loading
         }
         .onReceive(self.contentState.$targetAppIcon) { icon in
             self.rememberAppIcon(icon)
