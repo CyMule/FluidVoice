@@ -241,7 +241,7 @@ struct SettingsView: View {
                             // Launch at startup
                             self.settingsToggleRow(
                                 title: "Launch at startup",
-                                description: "Automatically start FluidVoice when you log in",
+                                description: "Automatically start Murmur when you log in",
                                 footnote: self.settings.launchAtStartupStatusMessage,
                                 errorMessage: self.settings.launchAtStartupErrorMessage,
                                 isOn: self.launchAtStartupBinding
@@ -252,7 +252,7 @@ struct SettingsView: View {
                             // Show window when launched at login
                             self.settingsToggleRow(
                                 title: "Show window when launched at login",
-                                description: "When off, FluidVoice starts silently in the menu bar at login. Opening the app yourself always shows the window.",
+                                description: "When off, Murmur starts silently in the menu bar at login. Opening the app yourself always shows the window.",
                                 isOn: Binding(
                                     get: { SettingsStore.shared.showMainWindowAtLoginLaunch },
                                     set: { SettingsStore.shared.showMainWindowAtLoginLaunch = $0 }
@@ -264,7 +264,7 @@ struct SettingsView: View {
                             // Hide from Dock & App Switcher
                             self.settingsToggleRow(
                                 title: "Hide from Dock & App Switcher",
-                                description: "Keep FluidVoice in the menu bar only (hides Dock icon and Cmd+Tab entry)",
+                                description: "Keep Murmur in the menu bar only (hides Dock icon and Cmd+Tab entry)",
                                 footnote: "Note: May require app restart to take effect.",
                                 isOn: Binding(
                                     get: { SettingsStore.shared.hideFromDockAndAppSwitcher },
@@ -531,7 +531,7 @@ struct SettingsView: View {
                                     let targetVersion = self.rollbackVersion
                                     let confirm = NSAlert()
                                     confirm.messageText = "Rollback to \(infoText)?"
-                                    confirm.informativeText = "This will restore a previous app version and relaunch FluidVoice."
+                                    confirm.informativeText = "This will restore a previous app version and relaunch Murmur."
                                     confirm.alertStyle = .warning
                                     confirm.addButton(withTitle: "Rollback")
                                     confirm.addButton(withTitle: "Cancel")
@@ -551,7 +551,7 @@ struct SettingsView: View {
                                             await MainActor.run {
                                                 let success = NSAlert()
                                                 success.messageText = "Rollback Successful"
-                                                success.informativeText = "Rolled back to \(targetVersion). FluidVoice will relaunch shortly."
+                                                success.informativeText = "Rolled back to \(targetVersion). Murmur will relaunch shortly."
                                                 success.alertStyle = .informational
                                                 success.addButton(withTitle: "Report Bug")
                                                 success.addButton(withTitle: "OK")
@@ -964,7 +964,7 @@ struct SettingsView: View {
 
                                         self.optionToggleRow(
                                             title: "Pause Media During Transcription",
-                                            description: "Automatically pause currently playing audio/video when transcription starts. Resumes only if FluidVoice paused it.",
+                                            description: "Automatically pause currently playing audio/video when transcription starts. Resumes only if Murmur paused it.",
                                             isOn: Binding(
                                                 get: { SettingsStore.shared.pauseMediaDuringTranscription },
                                                 set: { SettingsStore.shared.pauseMediaDuringTranscription = $0 }
@@ -977,10 +977,15 @@ struct SettingsView: View {
                                             .settingsSearchTarget(.dictionarySuggestions)
                                         Divider().opacity(0.2)
 
+                                        if Bundle.main.object(forInfoDictionaryKey: "FluidPersonalBuild") as? Bool == true {
+                                            Text("Analytics uploads are disabled in Murmur.")
+                                                .font(.subheadline)
+                                                .foregroundStyle(.secondary)
+                                        } else {
                                         self.optionToggleRow(
                                             title: "Share Detailed Anonymous Analytics",
                                             description: "Share anonymous daily feature, insertion performance, onboarding, and model metrics. " +
-                                                "When off, FluidVoice still records the anonymous daily activity signal and, in beta builds, daily ASR and Fluid Intelligence timing summaries. " +
+                                                "When off, Murmur still records the anonymous daily activity signal and, in beta builds, daily ASR and Fluid Intelligence timing summaries. " +
                                                 "Never includes transcription text or prompts.",
                                             isOn: self.detailedAnalyticsToggleBinding
                                         )
@@ -995,6 +1000,7 @@ struct SettingsView: View {
                                             Spacer()
                                         }
                                         .padding(.top, 6)
+                                        }
                                     }
                                     .padding(12)
                                 }
@@ -1163,7 +1169,7 @@ struct SettingsView: View {
 
                             self.optionToggleRow(
                                 title: "Microphone Changes",
-                                description: "Show an alert when FluidVoice changes or loses its microphone.",
+                                description: "Show an alert when Murmur changes or loses its microphone.",
                                 isOn: Binding(
                                     get: { self.settings.showMicrophoneChangeAlerts },
                                     set: { enabled in
@@ -1180,7 +1186,7 @@ struct SettingsView: View {
 
                             self.optionToggleRow(
                                 title: "Paste Check",
-                                description: "Show a card when FluidVoice can't confirm that pasted text landed.",
+                                description: "Show a card when Murmur can't confirm that pasted text landed.",
                                 isOn: Binding(
                                     get: { self.settings.showPasteCheckAlerts },
                                     set: { self.settings.showPasteCheckAlerts = $0 }
@@ -1717,7 +1723,7 @@ struct SettingsView: View {
 
             self.presentInfoAlert(
                 title: "Backup Exported",
-                message: "Saved your FluidVoice backup to:\n\(url.path)"
+                message: "Saved your Murmur backup to:\n\(url.path)"
             )
         } catch {
             self.presentErrorAlert(
@@ -1805,7 +1811,7 @@ struct SettingsView: View {
             let confirm = NSAlert()
             confirm.messageText = "Prune saved audio?"
             confirm.informativeText = """
-            This budget is below current audio usage. FluidVoice will delete the oldest saved audio first and keep transcript history.
+            This budget is below current audio usage. Murmur will delete the oldest saved audio first and keep transcript history.
             """
             confirm.alertStyle = .warning
             confirm.addButton(withTitle: "Apply and Prune")
@@ -2460,7 +2466,7 @@ private extension SettingsView {
                 }
             )) {
                 Text("Follow System Default").tag(SettingsStore.MicrophoneSelectionMode.followSystem)
-                Text("FluidVoice Priority").tag(SettingsStore.MicrophoneSelectionMode.manual)
+                Text("Murmur Priority").tag(SettingsStore.MicrophoneSelectionMode.manual)
             }
             .pickerStyle(.segmented)
             .disabled(self.isMicrophonePriorityEditingDisabled)
@@ -2476,7 +2482,7 @@ private extension SettingsView {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(self.inputDevices.first { $0.uid == self.cachedDefaultInputUID }?.name ?? "macOS default microphone")
                             .font(self.theme.typography.bodyStrong)
-                        Text("FlipMic controls the microphone. FluidVoice follows the macOS input at the start of each recording.")
+                        Text("FlipMic controls the microphone. Murmur follows the macOS input at the start of each recording.")
                             .font(self.theme.typography.bodySmall)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -2732,7 +2738,7 @@ private extension SettingsView {
             )
         } else {
             self.microphoneQualityGuidanceRow(
-                message: "This order applies only to FluidVoice and does not change your macOS input.",
+                message: "This order applies only to Murmur and does not change your macOS input.",
                 systemImage: "info.circle",
                 color: self.settingsSecondaryText
             )
@@ -3120,7 +3126,7 @@ private struct DictionarySuggestionsSettingsRow: View {
                     Text("Learn from my corrections")
                         .font(self.theme.typography.bodyStrong)
                         .foregroundStyle(self.theme.palette.primaryText)
-                    Text("If you retype a word FluidVoice got wrong, it asks to add the right spelling to your dictionary.")
+                    Text("If you retype a word Murmur got wrong, it asks to add the right spelling to your dictionary.")
                         .font(self.theme.typography.bodySmall)
                         .foregroundStyle(self.theme.palette.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)

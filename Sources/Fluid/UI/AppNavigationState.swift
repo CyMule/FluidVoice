@@ -83,7 +83,7 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
 
     var summary: String {
         switch self {
-        case .general: return "Make FluidVoice fit your daily workflow."
+        case .general: return "Make Murmur fit your daily workflow."
         case .dictation: return "Choose how recordings become text."
         case .dictationFormatting: return "Keep punctuation, spacing, and vocabulary consistent."
         case .shortcuts: return "Start, stop, and edit without leaving your current app."

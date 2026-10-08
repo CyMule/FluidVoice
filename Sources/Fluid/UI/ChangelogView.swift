@@ -80,7 +80,7 @@ struct ChangelogView: View {
                 Text("No changelog available")
                     .font(self.theme.typography.sectionTitle)
                     .foregroundStyle(self.theme.palette.primaryText)
-                Text("FluidVoice could not load GitHub release notes right now.")
+                Text("Murmur could not load GitHub release notes right now.")
                     .font(self.theme.typography.bodySmall)
                     .foregroundStyle(self.theme.palette.secondaryText)
             }
@@ -150,7 +150,7 @@ struct ChangelogView: View {
 
     private var cacheKey: String {
         let channel = SettingsStore.shared.betaReleasesEnabled ? "beta" : "stable"
-        return "FluidVoiceChangelogCache.\(channel)"
+        return "MurmurChangelogCache.\(channel)"
     }
 }
 

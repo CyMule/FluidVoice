@@ -153,8 +153,8 @@ extension VoiceEngineSettingsView {
                                     .fontWeight(.semibold)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
-                                    .background(Capsule().fill(badge == "FluidVoice Pick" ? .cyan.opacity(0.2) : .orange.opacity(0.2)))
-                                    .foregroundStyle(badge == "FluidVoice Pick" ? .cyan : .orange)
+                                    .background(Capsule().fill(badge == "Murmur Pick" ? .cyan.opacity(0.2) : .orange.opacity(0.2)))
+                                    .foregroundStyle(badge == "Murmur Pick" ? .cyan : .orange)
                             }
 
                             Spacer()
@@ -805,7 +805,7 @@ extension VoiceEngineSettingsView {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(bgColor)
 
-            if model.brandName == "FluidVoice" {
+            if model.brandName == "Murmur" {
                 FluidVoiceBrandIcon(size: 28)
             } else if model.usesAppleLogo {
                 Image(systemName: "apple.logo")

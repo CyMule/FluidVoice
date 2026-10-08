@@ -163,20 +163,20 @@ struct OnboardingFlowView: View {
             case .aiEnhancement:
                 return "Set Up AI Enhancement"
             case .playground:
-                return "Try FluidVoice"
+                return "Try Murmur"
             }
         }
 
         var subtitle: String {
             switch self {
             case .landing:
-                return "Talk anywhere. FluidVoice types for you."
+                return "Talk anywhere. Murmur types for you."
             case .language:
                 return "Pick the language you speak most."
             case .voiceModel:
                 return "Choose the best local engine for your language."
             case .permissions:
-                return "Allow FluidVoice to listen and type into other apps."
+                return "Allow Murmur to listen and type into other apps."
             case .aiEnhancement:
                 return "Optional: Configure AI post-processing or skip this step."
             case .playground:
@@ -450,7 +450,7 @@ struct OnboardingFlowView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Welcome to FluidVoice")
+            Text("Welcome to Murmur")
                 .font(self.theme.typography.title)
                 .foregroundStyle(self.theme.palette.primaryText)
 
@@ -1117,7 +1117,7 @@ struct OnboardingFlowView: View {
                             .frame(width: 608)
 
                             if self.isModelPreparationInProgress {
-                                Label("First-time setup can take a few minutes while your Mac prepares the model. Please keep FluidVoice open.", systemImage: "clock.arrow.circlepath")
+                                Label("First-time setup can take a few minutes while your Mac prepares the model. Please keep Murmur open.", systemImage: "clock.arrow.circlepath")
                                     .font(self.theme.typography.captionStrong)
                                     .foregroundStyle(self.theme.palette.warning)
                                     .labelStyle(.titleAndIcon)
@@ -1179,7 +1179,7 @@ struct OnboardingFlowView: View {
                             FluidOnboardingCompactAppIconMark(size: 66)
                                 .padding(.bottom, 22)
 
-                            Text("Let FluidVoice\nlisten and type")
+                            Text("Let Murmur\nlisten and type")
                                 .font(.fluidSystem(size: 28, weight: .semibold))
                                 .foregroundStyle(.white)
                                 .multilineTextAlignment(.center)
@@ -1196,7 +1196,7 @@ struct OnboardingFlowView: View {
                                     stepNumber: 1,
                                     title: self.isMicrophoneReady ? "Microphone access allowed" : "Allow microphone",
                                     subtitle: self.isMicrophoneReady
-                                        ? "Choose the microphone you want FluidVoice to use."
+                                        ? "Choose the microphone you want Murmur to use."
                                         : "macOS will ask once. Click Allow to start dictating.",
                                     systemImage: "mic.fill",
                                     isReady: self.isMicrophoneReady,
@@ -1229,7 +1229,7 @@ struct OnboardingFlowView: View {
                                 }
 
                                 if !self.isAccessibilityReady {
-                                    Text("Already enabled it? FluidVoice will update when macOS confirms access.")
+                                    Text("Already enabled it? Murmur will update when macOS confirms access.")
                                         .font(.fluidSystem(size: 12, weight: .medium))
                                         .foregroundStyle(Color.white.opacity(0.42))
                                         .padding(.top, 2)
@@ -1278,7 +1278,7 @@ struct OnboardingFlowView: View {
                             FluidOnboardingCompactAppIconMark(size: 66)
                                 .padding(.bottom, 22)
 
-                            Text("FluidVoice is ready.")
+                            Text("Murmur is ready.")
                                 .font(.fluidSystem(size: 28, weight: .semibold))
                                 .foregroundStyle(.white)
                                 .multilineTextAlignment(.center)
@@ -1537,7 +1537,7 @@ struct OnboardingFlowView: View {
 
         return VStack(alignment: .leading, spacing: isCompactModel ? self.theme.metrics.spacing.sm : 10) {
             HStack(alignment: .top, spacing: 10) {
-                if model.brandName == "FluidVoice" {
+                if model.brandName == "Murmur" {
                     FluidVoiceBrandIcon(size: 22)
                 }
                 Text(self.onboardingModelTitle(for: model))
@@ -2555,7 +2555,7 @@ private struct OnboardingMicrophoneSetupPanel: View {
                     .fluidDropdownStyle()
                     .frame(width: 248)
                     .tint(.white)
-                    .accessibilityHint("Moves the selected microphone to first in FluidVoice priority")
+                    .accessibilityHint("Moves the selected microphone to first in Murmur priority")
                 }
             }
             .padding(.horizontal, 18)

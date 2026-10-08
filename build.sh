@@ -17,8 +17,8 @@ PRIVATE_FI_BUILD_SCRIPT="${PROJECT_DIR}/build_with_FI_incremental.sh"
 DERIVED_DATA_PATH="${FLUIDVOICE_DERIVED_DATA_PATH:-${PROJECT_DIR}/DerivedData}"
 CONFIGURATION="${FLUIDVOICE_CONFIGURATION:-Debug}"
 case "${CONFIGURATION}" in
-    Debug) APP_NAME="FluidVoice Debug" ;;
-    Release) APP_NAME="FluidVoice" ;;
+    Debug) APP_NAME="Murmur Debug" ;;
+    Release) APP_NAME="Murmur" ;;
     *) echo "FLUIDVOICE_CONFIGURATION must be Debug or Release" >&2; exit 1 ;;
 esac
 

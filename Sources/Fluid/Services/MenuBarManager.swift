@@ -840,28 +840,28 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                 statusItem.button?.image = self.menuBarActivityImage(baseImage: image, activity: .recording)
                 statusItem.button?.setAccessibilityLabel(
                     self.meetingMenuPresentation.activity == .stopping
-                        ? "FluidVoice, stopping meeting recording"
-                        : "FluidVoice, meeting recording"
+                        ? "Murmur, stopping meeting recording"
+                        : "Murmur, meeting recording"
                 )
             case .preparing, .processing:
                 statusItem.button?.image = self.menuBarActivityImage(baseImage: image, activity: .processing)
                 statusItem.button?.setAccessibilityLabel(
                     self.meetingMenuPresentation.activity == .preparing
-                        ? "FluidVoice, starting meeting recording"
-                        : "FluidVoice, transcribing meeting"
+                        ? "Murmur, starting meeting recording"
+                        : "Murmur, transcribing meeting"
                 )
             case .interrupted, .failed:
                 statusItem.button?.image = self.menuBarActivityImage(baseImage: image, activity: .interrupted)
                 let status = self.meetingMenuPresentation.attentionStatus ?? "Meeting needs attention"
-                statusItem.button?.setAccessibilityLabel("FluidVoice, \(status.lowercased())")
+                statusItem.button?.setAccessibilityLabel("Murmur, \(status.lowercased())")
             case .inactive:
                 image.isTemplate = true
                 statusItem.button?.image = image
-                statusItem.button?.setAccessibilityLabel("FluidVoice")
+                statusItem.button?.setAccessibilityLabel("Murmur")
             case .completed:
                 image.isTemplate = true
                 statusItem.button?.image = image
-                statusItem.button?.setAccessibilityLabel("FluidVoice, meeting transcription complete")
+                statusItem.button?.setAccessibilityLabel("Murmur, meeting transcription complete")
             }
         }
     }
@@ -907,7 +907,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = "FluidVoice meeting status"
+        image.accessibilityDescription = "Murmur meeting status"
         return image
     }
 
@@ -1275,7 +1275,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
         let confirm = NSAlert()
         confirm.messageText = "Rollback to \(availableVersion)?"
-        confirm.informativeText = "This will restore the backup and relaunch FluidVoice."
+        confirm.informativeText = "This will restore the backup and relaunch Murmur."
         confirm.alertStyle = .warning
         confirm.addButton(withTitle: "Rollback")
         confirm.addButton(withTitle: "Cancel")
@@ -1287,7 +1287,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                 try await SimpleUpdater.shared.rollbackToLatestBackup()
                 let success = NSAlert()
                 success.messageText = "Rollback Successful"
-                success.informativeText = "Rolled back to \(availableVersion). FluidVoice will relaunch shortly."
+                success.informativeText = "Rolled back to \(availableVersion). Murmur will relaunch shortly."
                 success.alertStyle = .informational
                 success.addButton(withTitle: "Report Bug")
                 success.addButton(withTitle: "OK")
@@ -1411,7 +1411,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         guard window.styleMask.contains(.titled) else { return false }
         guard window.canBecomeKey else { return false }
         guard window.isMiniaturized == false else { return false }
-        return window.title == "FluidVoice" || window.title.contains("FluidVoice")
+        return window.title == "Murmur" || window.title.contains("Murmur")
     }
 
     @objc private func openPreferences() {
@@ -1525,7 +1525,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "FluidVoice"
+        window.title = "Murmur"
         // Match the SwiftUI main scene when recreating a closed window.
         window.toolbarStyle = .unified
         window.animationBehavior = .none

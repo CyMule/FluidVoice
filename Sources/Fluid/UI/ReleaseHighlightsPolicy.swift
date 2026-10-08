@@ -2,7 +2,7 @@ import Foundation
 
 /// Main-thread callers serialize requests; tokens reject delayed callbacks from old sheets.
 struct ReleaseHighlightsPolicy {
-    static let seenKey = "FluidVoiceSeenReleaseHighlightVersions"
+    static let seenKey = "MurmurSeenReleaseHighlightVersions"
     static let historyLimit = 32
 
     struct Session: Equatable, Identifiable {

@@ -44,9 +44,10 @@ final class SettingsStore: ObservableObject {
     private(set) var launchAtStartupEnabled = false
     private(set) var launchAtStartupErrorMessage: String?
     private(set) var launchAtStartupStatusMessage =
-        "FluidVoice reflects the actual macOS login item state. Unsigned or development builds may fail to enable this."
+        "Murmur reflects the actual macOS login item state. Unsigned or development builds may fail to enable this."
 
     private init() {
+        Self.migratePersonalAppIdentityIfNeeded(defaults: self.defaults, bundleIdentifier: Bundle.main.bundleIdentifier)
         self.migrateTranscriptionStartSoundIfNeeded()
         self.ensureDebugLoggingDefaults()
         self.migrateProviderAPIKeysIfNeeded()
@@ -63,6 +64,21 @@ final class SettingsStore: ObservableObject {
         self.migratePrivateAIContextDefaultTo4KIfNeeded()
         Self.migrateTextInsertionModeToReliablePasteIfNeeded(defaults: self.defaults)
         self.refreshLaunchAtStartupStatus(clearError: true, logMismatch: false)
+    }
+
+    /// Import preferences once without copying credentials or OS permissions.
+    /// History and model caches keep their existing storage locations.
+    static func migratePersonalAppIdentityIfNeeded(
+        defaults: UserDefaults, bundleIdentifier: String?, previousPreferences: [String: Any]? = nil
+    ) {
+        guard bundleIdentifier == "dev.cymule.murmur",
+              !defaults.bool(forKey: "MurmurIdentityMigrationV1") else { return }
+        let previous = previousPreferences ?? defaults.persistentDomain(forName: "com.FluidApp.app") ?? [:]
+        for (key, value) in previous where key != "ProviderAPIKeys" && key != "ProviderAPIKeyIdentifiers" {
+            if defaults.object(forKey: key) == nil { defaults.set(value, forKey: key) }
+        }
+        defaults.set(MicrophoneSelectionMode.followSystem.rawValue, forKey: Keys.microphoneSelectionMode)
+        defaults.set(true, forKey: "MurmurIdentityMigrationV1")
     }
 
     static func clampPrivateAIContextTokenLimit(_ value: Int) -> Int {
@@ -243,7 +259,7 @@ final class SettingsStore: ObservableObject {
             case .system, .followSystem:
                 return "Follow System Default"
             case .manual:
-                return "FluidVoice Priority"
+                return "Murmur Priority"
             }
         }
     }
@@ -5487,11 +5503,11 @@ final class SettingsStore: ObservableObject {
             }
         }
 
-        /// Optional badge text for the card (e.g., "FluidVoice Pick")
+        /// Optional badge text for the card (e.g., "Murmur Pick")
         var badgeText: String? {
             switch self {
-            case .parakeetTDT: return "FluidVoice Pick"
-            case .parakeetTDTv2: return "FluidVoice Pick"
+            case .parakeetTDT: return "Murmur Pick"
+            case .parakeetTDTv2: return "Murmur Pick"
             case .fluidParakeetMini, .fluidParakeetPico: return "New"
             case .parakeetRealtime: return "Beta"
             case .qwen3Asr: return "Beta"

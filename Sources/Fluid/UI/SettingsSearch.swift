@@ -232,7 +232,7 @@ enum SettingsSearchIndex {
         .init(
             target: .launchAtStartup,
             title: "Launch at startup",
-            terms: ["Automatically start FluidVoice when you log in", "login startup boot open"]
+            terms: ["Automatically start Murmur when you log in", "login startup boot open"]
         ),
         .init(
             target: .showWindowAtLogin,
@@ -707,7 +707,7 @@ private final class SidebarSearchNativeField: NSSearchField {
 }
 
 private struct SidebarSearchInput: NSViewRepresentable {
-    private static let identifier = NSUserInterfaceItemIdentifier("FluidVoice.SidebarSearchField")
+    private static let identifier = NSUserInterfaceItemIdentifier("Murmur.SidebarSearchField")
 
     @Binding var text: String
     let placeholder: String
@@ -825,5 +825,5 @@ private struct SidebarSearchInput: NSViewRepresentable {
 }
 
 extension Notification.Name {
-    static let sidebarSearchFocusRequested = Notification.Name("FluidVoice.sidebarSearchFocusRequested")
+    static let sidebarSearchFocusRequested = Notification.Name("Murmur.sidebarSearchFocusRequested")
 }

@@ -4,6 +4,22 @@ import XCTest
 
 @MainActor
 final class SettingsBackupRoundTripTests: XCTestCase {
+    func testPersonalIdentityImportsPreferencesOnceWithoutCredentials() throws {
+        let suite = "MurmurMigrationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("keep", forKey: "ExistingSetting")
+        let old: [String: Any] = ["ExistingSetting": "overwrite", "SavedModel": "parakeet", "ProviderAPIKeys": ["openai": "test-only"], "MicrophoneSelectionMode": "manual"]
+        SettingsStore.migratePersonalAppIdentityIfNeeded(defaults: defaults, bundleIdentifier: "dev.cymule.murmur", previousPreferences: old)
+        XCTAssertEqual(defaults.string(forKey: "ExistingSetting"), "keep")
+        XCTAssertEqual(defaults.string(forKey: "SavedModel"), "parakeet")
+        XCTAssertNil(defaults.object(forKey: "ProviderAPIKeys"))
+        XCTAssertEqual(defaults.string(forKey: "MicrophoneSelectionMode"), "followSystem")
+        defaults.set("manual", forKey: "MicrophoneSelectionMode")
+        SettingsStore.migratePersonalAppIdentityIfNeeded(defaults: defaults, bundleIdentifier: "dev.cymule.murmur", previousPreferences: old)
+        XCTAssertEqual(defaults.string(forKey: "MicrophoneSelectionMode"), "manual")
+    }
+
     func testFollowSystemMicrophoneModeSurvivesBackupRestore() throws {
         try self.withSavedDefaults {
             let settings = SettingsStore.shared

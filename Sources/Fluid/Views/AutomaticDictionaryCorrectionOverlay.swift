@@ -261,8 +261,8 @@ final class MicrophoneChangeOverlayController {
 
     private static let displayDurationNanoseconds: UInt64 = 5_000_000_000
     private static let supportedBundleIdentifiers = [
-        "com.FluidApp.app",
-        "com.FluidApp.app.debug",
+        "dev.cymule.murmur",
+        "dev.cymule.murmur.debug",
     ]
     private var panel: NSPanel?
     private var hostingView: NSHostingView<MicrophoneChangeOverlayView>?
