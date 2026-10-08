@@ -1405,6 +1405,24 @@ struct SettingsView: View {
                             if self.settings.overlayPosition == .bottom {
                                 Divider().padding(.vertical, 4)
 
+                                HStack {
+                                    Text("Drag the grip on the preview to move it. Its position is saved between recordings.")
+                                        .font(self.theme.typography.bodySmall)
+                                        .foregroundStyle(self.settingsSecondaryText)
+                                    Spacer()
+                                    Button("Show Preview") { BottomOverlayWindowController.shared.showPlacementPreview() }
+                                        .help("Show sample text without recording audio.")
+                                        .disabled(self.asr.isRunningOrStarting || NotchContentState.shared.isProcessing)
+                                    Button("Hide Preview") {
+                                        if !self.asr.isRunningOrStarting, !NotchContentState.shared.isProcessing {
+                                            BottomOverlayWindowController.shared.hide()
+                                        }
+                                    }
+                                    .disabled(self.asr.isRunningOrStarting || NotchContentState.shared.isProcessing)
+                                    Button("Reset Position") { self.settings.overlayPlacement = nil }
+                                        .disabled(self.settings.overlayPlacement == nil)
+                                }
+
                                 // Bottom Offset
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
@@ -1420,6 +1438,7 @@ struct SettingsView: View {
 
                                     HStack(spacing: 6) {
                                         Slider(value: self.$settings.overlayBottomOffset, in: 20...500)
+                                            .onChange(of: self.settings.overlayBottomOffset) { _, _ in self.settings.overlayPlacement = nil }
                                             .frame(width: 110)
                                             .controlSize(.small)
 

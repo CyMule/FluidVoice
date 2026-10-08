@@ -91,6 +91,7 @@ struct SettingsBackupPayload: Codable, Equatable {
     let visualizerNoiseThreshold: Double
     let overlayPosition: SettingsStore.OverlayPosition
     let overlayBottomOffset: Double
+    var overlayPlacement: SettingsStore.OverlayPlacement? = nil
     let overlaySize: SettingsStore.OverlaySize
     let overlayMaterial: SettingsStore.OverlayMaterial?
     let overlayGlassOpacity: Double?

@@ -33,6 +33,8 @@ final class BottomOverlayWindowController {
     private var localMouseDownMonitor: Any?
     private var globalMouseDownMonitor: Any?
     private var targetScreen: NSScreen?
+    private var isDragging = false
+    private var dragCompletionTimer: Timer?
     private var releaseTransitionActiveUntil: Date?
     private var deferredResizePending = false
     private var presentationGeneration: UInt64 = 0
@@ -47,6 +49,9 @@ final class BottomOverlayWindowController {
 
     /// Drops the cached panel so a test can exercise the launch-time prepare path.
     func destroyWindowForTests() {
+        self.dragCompletionTimer?.invalidate()
+        self.dragCompletionTimer = nil
+        self.isDragging = false
         self.pendingResizeWorkItem?.cancel()
         self.pendingResizeWorkItem = nil
         self.pendingIgnoreMouseWorkItem?.cancel()
@@ -563,7 +568,7 @@ final class BottomOverlayWindowController {
     }
 
     private func scheduleSizeAndPositionUpdate(after delay: TimeInterval = 0.08) {
-        if self.isReleaseTransitionActive {
+        if self.isDragging || self.isReleaseTransitionActive {
             self.deferredResizePending = true
             return
         }
@@ -611,7 +616,7 @@ final class BottomOverlayWindowController {
     private func updateSizeAndPosition() {
         var trace = OverlayCloseTrace("bottom.layout")
         defer { trace.finish() }
-        if self.isReleaseTransitionActive {
+        if self.isDragging || self.isReleaseTransitionActive {
             self.deferredResizePending = true
             return
         }
@@ -748,11 +753,76 @@ final class BottomOverlayWindowController {
         guard NotchContentState.shared.isBottomOverlayPresented else { return }
         (window as? BottomOverlayPanel)?.allowsOffscreenParking = false
 
-        let screen = self.targetScreen ?? window.screen ?? OverlayScreenResolver.screenForCurrentPointer()
-        guard let screen = screen else { return }
+        guard !self.isDragging else { return }
+        let saved = SettingsStore.shared.overlayPlacement
+        let savedScreen = NSScreen.screens.first { Self.displayID(for: $0) == saved?.displayID }
+        let screen = savedScreen ?? self.targetScreen ?? window.screen ?? OverlayScreenResolver.screenForCurrentPointer()
+        guard let screen else { return }
 
         // Apply position directly to avoid implicit frame animations during hover-driven resizes.
-        window.setFrameOrigin(Self.origin(for: window.frame.size, on: screen))
+        if let saved {
+            window.setFrameOrigin(Self.savedOrigin(for: window.frame.size, visibleFrame: screen.visibleFrame, placement: saved))
+        } else {
+            window.setFrameOrigin(Self.origin(for: window.frame.size, on: screen))
+        }
+    }
+
+    private static func displayID(for screen: NSScreen) -> String {
+        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.stringValue ?? ""
+    }
+
+    static func savedOrigin(for size: CGSize, visibleFrame: CGRect, placement: SettingsStore.OverlayPlacement) -> CGPoint {
+        let x = visibleFrame.minX + CGFloat(min(max(placement.x, 0), 1)) * visibleFrame.width - size.width / 2
+        let y = visibleFrame.minY + CGFloat(min(max(placement.y, 0), 1)) * visibleFrame.height
+        return CGPoint(
+            x: min(max(x, visibleFrame.minX + 8), max(visibleFrame.minX + 8, visibleFrame.maxX - size.width - 8)),
+            y: min(max(y, visibleFrame.minY + 8), max(visibleFrame.minY + 8, visibleFrame.maxY - size.height - 8))
+        )
+    }
+
+    func showPlacementPreview() {
+        guard !AppServices.shared.asr.isRunningOrStarting, !NotchContentState.shared.isProcessing else { return }
+        self.show(audioPublisher: Just(CGFloat.zero).eraseToAnyPublisher(), mode: .dictation)
+        NotchContentState.shared.updateTranscription("Your words appear here as you speak.")
+        self.refreshSizeForContent()
+    }
+
+    func beginDragging() {
+        self.isDragging = true
+        self.dragCompletionTimer?.invalidate()
+        // AppKit hands dragging to WindowServer and returns immediately; it
+        // does not guarantee a mouseUp callback. Finish after the button lifts.
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isDragging, NSEvent.pressedMouseButtons & 1 == 0 else { return }
+                self.dragCompletionTimer?.invalidate()
+                self.dragCompletionTimer = nil
+                self.finishDragging()
+            }
+        }
+        self.dragCompletionTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+        self.pendingResizeWorkItem?.cancel()
+        BottomOverlayPromptMenuController.shared.hide()
+        BottomOverlayModeMenuController.shared.hide()
+        BottomOverlayActionsMenuController.shared.hide()
+    }
+
+    func finishDragging() {
+        defer {
+            self.isDragging = false
+            self.deferredResizePending = false
+            self.updateSizeAndPosition()
+        }
+        guard NotchContentState.shared.isBottomOverlayPresented, let window, let screen = window.screen else { return }
+        let visible = screen.visibleFrame
+        guard visible.width > 0, visible.height > 0 else { return }
+        self.targetScreen = screen
+        SettingsStore.shared.overlayPlacement = .init(
+            displayID: Self.displayID(for: screen),
+            x: Double((window.frame.midX - visible.minX) / visible.width),
+            y: Double((window.frame.minY - visible.minY) / visible.height)
+        )
     }
 
     private static func origin(for windowSize: CGSize, on screen: NSScreen) -> NSPoint {
@@ -2353,6 +2423,24 @@ private final class BottomOverlayHostingView: NSHostingView<BottomOverlayView> {
     }
 }
 
+private struct OverlayDragGrip: NSViewRepresentable {
+    func makeNSView(context: Context) -> OverlayDragGripView { OverlayDragGripView() }
+    func updateNSView(_ nsView: OverlayDragGripView, context: Context) {}
+}
+
+private final class OverlayDragGripView: NSView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.secondaryLabelColor.withAlphaComponent(0.5).setFill()
+        NSBezierPath(roundedRect: NSRect(x: bounds.midX - 12, y: bounds.midY - 1.5, width: 24, height: 3), xRadius: 1.5, yRadius: 1.5).fill()
+    }
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        BottomOverlayWindowController.shared.beginDragging()
+        window.performDrag(with: event)
+    }
+}
+
 private struct DynamicPreviewHeightPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
@@ -2450,7 +2538,7 @@ struct BottomOverlayView: View {
                     waveformWidth: 90,
                     waveformHeight: 20,
                     iconSize: 16,
-                    transFontSize: 11,
+                    transFontSize: 12,
                     modeFontSize: 10,
                     cornerRadius: 14,
                     barCount: 7,
@@ -2458,8 +2546,8 @@ struct BottomOverlayView: View {
                     barSpacing: 3.5,
                     minBarHeight: 5,
                     maxBarHeight: 16,
-                    containerWidth: 200,
-                    overlayWidth: 300,
+                    containerWidth: 220,
+                    overlayWidth: 220,
                     overlayHeight: 124,
                     previewBoxHeight: 0,
                     usesFixedCanvas: false,
@@ -3465,6 +3553,10 @@ struct BottomOverlayView: View {
 
     var body: some View {
         VStack(spacing: max(4, self.layout.vPadding / 2)) {
+            OverlayDragGrip()
+                .frame(width: 44, height: 12)
+                .help("Drag to move the preview. Murmur remembers this position.")
+                .accessibilityLabel("Move transcription preview")
             if self.layout.showsTopControls, !self.isCompactControls {
                 HStack {
                     Spacer(minLength: 4)

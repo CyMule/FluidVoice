@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 @testable import FluidVoice_Debug
 import XCTest
 
@@ -18,6 +19,59 @@ final class SettingsBackupRoundTripTests: XCTestCase {
         defaults.set("manual", forKey: "MicrophoneSelectionMode")
         SettingsStore.migratePersonalAppIdentityIfNeeded(defaults: defaults, bundleIdentifier: "dev.cymule.murmur", previousPreferences: old)
         XCTAssertEqual(defaults.string(forKey: "MicrophoneSelectionMode"), "manual")
+    }
+
+    func testDraggedOverlayPositionSurvivesBackupAndRestore() throws {
+        try self.withSavedDefaults {
+            let settings = SettingsStore.shared
+            let placement = SettingsStore.OverlayPlacement(displayID: "external-monitor", x: 0.85, y: 0.3)
+            settings.overlayPlacement = placement
+            let payload = settings.makeBackupPayload()
+            let restored = try JSONDecoder().decode(SettingsBackupPayload.self, from: JSONEncoder().encode(payload))
+            settings.overlayPlacement = nil
+            settings.restore(from: restored, promptProfiles: settings.dictationPromptProfiles, appPromptBindings: [])
+            XCTAssertEqual(settings.overlayPlacement, placement)
+            let oldBackup = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(payload)) as? [String: Any])
+            var legacy = oldBackup
+            legacy.removeValue(forKey: "overlayPlacement")
+            let oldPayload = try JSONDecoder().decode(SettingsBackupPayload.self, from: JSONSerialization.data(withJSONObject: legacy))
+            XCTAssertNil(oldPayload.overlayPlacement)
+        }
+    }
+
+    func testSavedOverlayPositionIsReusedAcrossPresentations() throws {
+        try self.withSavedDefaults {
+            let settings = SettingsStore.shared
+            let controller = BottomOverlayWindowController.shared
+            let saved = SettingsStore.OverlayPlacement(displayID: "fallback-screen", x: 0.8, y: 0.4)
+            settings.overlaySize = .small
+            settings.overlayPlacement = saved
+            defer {
+                controller.hideImmediately()
+                controller.destroyWindowForTests()
+            }
+            for _ in 0..<2 {
+                controller.show(audioPublisher: Empty<CGFloat, Never>().eraseToAnyPublisher(), mode: .dictation)
+                let panel = try XCTUnwrap(NSApp.windows.first { $0 is BottomOverlayPanel })
+                let screen = try XCTUnwrap(panel.screen)
+                let expected = BottomOverlayWindowController.savedOrigin(for: panel.frame.size, visibleFrame: screen.visibleFrame, placement: saved)
+                XCTAssertEqual(panel.frame.minX, expected.x, accuracy: 1)
+                XCTAssertEqual(panel.frame.minY, expected.y, accuracy: 1)
+                XCTAssertEqual(panel.frame.width, 220, accuracy: 1)
+                controller.hideImmediately()
+            }
+        }
+    }
+
+    func testSavedOverlayPositionClampsAfterDisplayAndSizeChanges() {
+        let visible = CGRect(x: -1200, y: 40, width: 1200, height: 760)
+        let placement = SettingsStore.OverlayPlacement(displayID: "removed", x: 1.2, y: 1)
+        for size in [CGSize(width: 220, height: 90), CGSize(width: 600, height: 300)] {
+            let origin = BottomOverlayWindowController.savedOrigin(for: size, visibleFrame: visible, placement: placement)
+            XCTAssertTrue(visible.contains(CGRect(origin: origin, size: size)))
+            XCTAssertEqual(origin.x, visible.maxX - size.width - 8)
+            XCTAssertEqual(origin.y, visible.maxY - size.height - 8)
+        }
     }
 
     func testFollowSystemMicrophoneModeSurvivesBackupRestore() throws {

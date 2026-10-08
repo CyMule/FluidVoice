@@ -48,6 +48,10 @@ final class SettingsStore: ObservableObject {
 
     private init() {
         Self.migratePersonalAppIdentityIfNeeded(defaults: self.defaults, bundleIdentifier: Bundle.main.bundleIdentifier)
+        if Bundle.main.bundleIdentifier == "dev.cymule.murmur", !self.defaults.bool(forKey: "MurmurCompactOverlayV1") {
+            self.defaults.set(OverlaySize.small.rawValue, forKey: Keys.overlaySize)
+            self.defaults.set(true, forKey: "MurmurCompactOverlayV1")
+        }
         self.migrateTranscriptionStartSoundIfNeeded()
         self.ensureDebugLoggingDefaults()
         self.migrateProviderAPIKeysIfNeeded()
@@ -2430,6 +2434,28 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    struct OverlayPlacement: Codable, Equatable {
+        let displayID: String
+        let x: Double
+        let y: Double
+    }
+
+    var overlayPlacement: OverlayPlacement? {
+        get {
+            guard let data = self.defaults.data(forKey: "MurmurOverlayPlacement"),
+                  let value = try? JSONDecoder().decode(OverlayPlacement.self, from: data),
+                  value.x.isFinite, value.y.isFinite else { return nil }
+            return value
+        }
+        set {
+            objectWillChange.send()
+            if let newValue, let data = try? JSONEncoder().encode(newValue) {
+                self.defaults.set(data, forKey: "MurmurOverlayPlacement")
+            } else { self.defaults.removeObject(forKey: "MurmurOverlayPlacement") }
+            NotificationCenter.default.post(name: NSNotification.Name("OverlayOffsetChanged"), object: nil)
+        }
+    }
+
     /// Vertical offset for the bottom overlay (distance from bottom of screen/dock)
     var overlayBottomOffset: Double {
         get {
@@ -3656,6 +3682,7 @@ final class SettingsStore: ObservableObject {
             visualizerNoiseThreshold: self.visualizerNoiseThreshold,
             overlayPosition: self.overlayPosition,
             overlayBottomOffset: self.overlayBottomOffset,
+            overlayPlacement: self.overlayPlacement,
             overlaySize: self.overlaySize,
             overlayMaterial: self.overlayMaterial,
             overlayGlassOpacity: self.overlayGlassOpacity,
@@ -3842,6 +3869,7 @@ final class SettingsStore: ObservableObject {
         self.visualizerNoiseThreshold = payload.visualizerNoiseThreshold
         self.overlayPosition = payload.overlayPosition
         self.overlayBottomOffset = payload.overlayBottomOffset
+        self.overlayPlacement = payload.overlayPlacement
         self.overlaySize = payload.overlaySize
         if let overlayMaterial = payload.overlayMaterial {
             self.overlayMaterial = overlayMaterial
